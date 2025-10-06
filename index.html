@@ -1,12 +1,112 @@
--      const apiUrl = "https://ogpassmaketool.onrender.com/api/generate"; // ←自分のAPI URLに変更
-+      const apiUrl = "https://script.google.com/macros/s/AKfycbyyk167VkB-mTFmYkld9NGIUEggcSvNct3W_6S9RzV9NloD6W1MIoQEXMohNcl8nxqj/exec"; // ←GASのWebアプリURLに差し替え
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>パスワード生成ツール</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body {
+      max-width: 400px;
+      margin: 2em auto;
+      font-size: 1.1em;
+      font-family: sans-serif;
+      padding: 0 1em;
+      background: #f8f9fa;
+    }
+    h2 {
+      font-size: 1.2em;
+      margin-bottom: 1.5em;
+      text-align: center;
+    }
+    label, input, button {
+      display: block;
+      width: 100%;
+      margin-bottom: 0.8em;
+    }
+    input[type="text"] {
+      padding: 0.5em;
+      font-size: 1.1em;
+      box-sizing: border-box;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      background: #fff;
+    }
+    button {
+      padding: 0.7em 0;
+      font-size: 1.1em;
+      border: none;
+      border-radius: 4px;
+      background: #007bff;
+      color: #fff;
+      margin-bottom: 1em;
+      cursor: pointer;
+    }
+    button:active {
+      background: #0056b3;
+    }
+    #error {
+      color: #e74c3c;
+      font-weight: bold;
+      margin-bottom: 1em;
+      text-align: center;
+    }
+    @media (max-width: 480px) {
+      body {
+        max-width: 98vw;
+        font-size: 1em;
+      }
+    }
+  </style>
+</head>
+<body>
+  <h2>OG4xx/OG8xx　パスワード生成ツール（Ver1.30　Web版）</h2>
+  <label for="macInput">MACアドレス：</label>
+  <input type="text" id="macInput" size="20" autocomplete="off">
+  <button onclick="generate()">生成</button>
+  <p id="error"></p>
+  <label for="password">パスワード：</label>
+  <input type="text" id="password" size="20" readonly>
+  <button onclick="copyToClipboard()">コピー</button>
+  <script>
+    const apiUrl = "https://script.google.com/macros/s/XXXXXXXXXXXXXXXX/exec"; // GASのWebアプリURLに差し替え
 
--        fetch(apiUrl, {
--          method: "POST",
--          headers: { "Content-Type": "application/json" },
--          body: JSON.stringify({ mac: macRaw })
--        })
-+        fetch(apiUrl, {
-+          method: "POST",
-+          body: JSON.stringify({ mac: macRaw })
-+        })
+    function generate() {
+      const macRaw = document.getElementById("macInput").value;
+      document.getElementById("error").textContent = "";
+      document.getElementById("password").value = "";
+      fetch(apiUrl, {
+        method: "POST",
+        body: JSON.stringify({ mac: macRaw })
+      })
+      .then(res => {
+        if (!res.ok) throw new Error("APIサーバー応答エラー");
+        return res.json();
+      })
+      .then(json => {
+        if (json.error) {
+          document.getElementById("error").textContent = json.error;
+          document.getElementById("password").value = "";
+        } else {
+          document.getElementById("error").textContent = "";
+          document.getElementById("password").value = json.password;
+        }
+      })
+      .catch(err => {
+        document.getElementById("error").textContent = "APIサーバーに接続できません";
+        document.getElementById("password").value = "";
+      });
+    }
+
+    function copyToClipboard() {
+      const pwd = document.getElementById("password");
+      if (!pwd.value) {
+        alert("パスワードがありません");
+        return;
+      }
+      navigator.clipboard.writeText(pwd.value).then(() => {
+        alert("クリップボードにコピーしました");
+      });
+    }
+  </script>
+</body>
+</html>
