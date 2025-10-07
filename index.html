@@ -70,39 +70,50 @@
   <script>
     const apiUrl = "https://script.google.com/macros/s/AKfycbyyk167VkB-mTFmYkld9NGIUEggcSvNct3W_6S9RzV9NloD6W1MIoQEXMohNcl8nxqj/exec"; // ←最新のGAS WebアプリURLに更新
 
-    function generate() {
-      const macRaw = document.getElementById("macInput").value.trim();
-      document.getElementById("error").textContent = "";
-      document.getElementById("password").value = "";
-      
+    async function generate() {
+      const macInput = document.getElementById("macInput");
+      const errorEl = document.getElementById("error");
+      const passwordEl = document.getElementById("password");
+      const macRaw = macInput.value.trim();
+
+      errorEl.textContent = "";
+      passwordEl.value = "";
+
+      if (!macRaw) {
+        errorEl.textContent = "MACアドレスを入力してください。";
+        macInput.focus();
+        return;
+      }
+
       const params = new URLSearchParams({ mac: macRaw });
 
-      fetch(apiUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded"
-        },
-        body: params.toString(),
-        cache: "no-store"
-
-      })
-        .then(res => {
-          if (!res.ok) throw new Error("APIサーバー応答エラー");
-          return res.json();
-        })
-        .then(json => {
-          if (json.error) {
-            document.getElementById("error").textContent = json.error;
-            document.getElementById("password").value = "";
-          } else {
-            document.getElementById("error").textContent = "";
-            document.getElementById("password").value = json.password || "";
-          }
-        })
-        .catch(() => {
-          document.getElementById("error").textContent = "APIサーバーに接続できません";
-          document.getElementById("password").value = "";
+      try {
+        const res = await fetch(apiUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded"
+          },
+          body: params.toString(),
+          mode: "cors",
+          cache: "no-store"
         });
+      
+        if (!res.ok) {
+          throw new Error("APIサーバー応答エラー");
+        }
+
+        const json = await res.json();
+
+        if (json && json.error) {
+          errorEl.textContent = json.error;
+          return;
+        }
+
+        passwordEl.value = (json && json.password) ? json.password : "";
+      } catch (err) {
+        console.error("API request failed", err);
+        errorEl.textContent = "APIサーバーに接続できません";
+      }
     }
 
     function copyToClipboard() {
