@@ -24,7 +24,6 @@
       margin-bottom: 0.8em;
     }
     input[type="text"] {
-            const params = new URLSearchParams({ mac: macRaw });
       padding: 0.5em;
       font-size: 1.1em;
       box-sizing: border-box;
@@ -72,39 +71,38 @@
     const apiUrl = "https://script.google.com/macros/s/AKfycbyyk167VkB-mTFmYkld9NGIUEggcSvNct3W_6S9RzV9NloD6W1MIoQEXMohNcl8nxqj/exec"; // ←最新のGAS WebアプリURLに更新
 
     function generate() {
-      const macRaw = document.getElementById("macInput").value;
+      const macRaw = document.getElementById("macInput").value.trim();
       document.getElementById("error").textContent = "";
-            const params = new URLSearchParams({ mac: macRaw });
       document.getElementById("password").value = "";
+      
+      const params = new URLSearchParams({ mac: macRaw });
+
       fetch(apiUrl, {
+                method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"
         },
         body: params.toString(),
         cache: "no-store"
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"
-        },
-        body: params.toString(),
-        cache: "no-store"
+
       })
-      .then(res => {
-        if (!res.ok) throw new Error("APIサーバー応答エラー");
-        return res.json();
-      })
-      .then(json => {
-        if (json.error) {
-          document.getElementById("error").textContent = json.error;
+        .then(res => {
+          if (!res.ok) throw new Error("APIサーバー応答エラー");
+          return res.json();
+        })
+        .then(json => {
+          if (json.error) {
+            document.getElementById("error").textContent = json.error;
+            document.getElementById("password").value = "";
+          } else {
+            document.getElementById("error").textContent = "";
+            document.getElementById("password").value = json.password || "";
+          }
+        })
+        .catch(() => {
+          document.getElementById("error").textContent = "APIサーバーに接続できません";
           document.getElementById("password").value = "";
-        } else {
-          document.getElementById("error").textContent = "";
-          document.getElementById("password").value = json.password;
-        }
-      })
-      .catch(err => {
-        document.getElementById("error").textContent = "APIサーバーに接続できません";
-        document.getElementById("password").value = "";
-      });
+        });
     }
 
     function copyToClipboard() {
