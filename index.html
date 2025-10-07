@@ -24,6 +24,7 @@
       margin-bottom: 0.8em;
     }
     input[type="text"] {
+            const params = new URLSearchParams({ mac: macRaw });
       padding: 0.5em;
       font-size: 1.1em;
       box-sizing: border-box;
@@ -76,7 +77,11 @@
       document.getElementById("password").value = "";
       fetch(apiUrl, {
         method: "POST",
-        body: JSON.stringify({ mac: macRaw })
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"
+        },
+        body: params.toString(),
+        cache: "no-store"
       })
       .then(res => {
         if (!res.ok) throw new Error("APIサーバー応答エラー");
