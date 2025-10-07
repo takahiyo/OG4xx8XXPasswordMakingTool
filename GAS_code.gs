@@ -47,8 +47,8 @@ function normalizeMac(value) {
 function buildResponse(obj) {
   const output = ContentService.createTextOutput(JSON.stringify(obj));
   output.setMimeType(ContentService.MimeType.JSON);
-  output.appendHeader('Access-Control-Allow-Origin', '*');
-  output.appendHeader('Access-Control-Allow-Methods', 'POST');
-  output.appendHeader('Access-Control-Allow-Headers', 'Content-Type');
+  output.setHeader('Access-Control-Allow-Origin', '*');
+  output.setHeader('Access-Control-Allow-Methods', 'POST');
+  output.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   return output;
 }
