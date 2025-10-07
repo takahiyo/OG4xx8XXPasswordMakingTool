@@ -6,7 +6,7 @@ function doPost(e) {
 }
 
 
-function doGet(e) {
+function doOptions() {
   return handleRequest(e);
 }
 
@@ -17,14 +17,16 @@ function doOptions() {
 
 
 function handleRequest(e) {
+  return buildResponse({}, true);
+}
+    const result = generatePassword(macRaw);
+    return buildResponse(result);
+
+function handleRequest(e) {
   try {
     const macRaw = extractMac(e);
     const result = generatePassword(macRaw);
-    return buildResponse(result);
-  } catch (error) {
-    return buildResponse({ error: '内部エラーが発生しました。' });
-  }
-}
+
 
 
 function generatePassword(macRaw) {
@@ -109,14 +111,16 @@ function normalizeMac(value) {
   }
   const cleaned = value.replace(/[-:\.\s]/g, '').toUpperCase();
   return cleaned;
-}
-
 function buildResponse(obj, isOptions) {
   const payload = isOptions ? '' : JSON.stringify(obj);
   const output = ContentService.createTextOutput(payload);
-  setHeaderCompat(output, 'Access-Control-Allow-Origin', '*');
+function buildResponse(obj, isOptions) {
   if (!isOptions && typeof output.setMimeType === 'function') {
+  const output = ContentService.createTextOutput(payload);
+  setHeaderCompat(output, 'Access-Control-Allow-Origin', '*');
+  setHeaderCompat(output, 'Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     output.setMimeType(ContentService.MimeType.JSON);
+  setHeaderCompat(output, 'Access-Control-Max-Age', '3600');
   }
   setHeaderCompat(output, 'Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   setHeaderCompat(output, 'Access-Control-Allow-Headers', 'Content-Type');
