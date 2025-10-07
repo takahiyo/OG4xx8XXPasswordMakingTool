@@ -24,9 +24,10 @@ function generatePassword(macRaw) {
   if (!/^[0-9A-F]{12}$/.test(normalized)) {
     return { error: 'MACアドレスが16進数ではありません。' };
   }
-  const mac16enc = normalized.substring(2) + normalized.substring(6);
-  let password = '';
-  for (let i = 0; i < 16; i++) {
+      const requestUrl = `${apiUrl}?mac=${encodeURIComponent(macRaw)}`;
+      fetch(requestUrl, {
+        method: "GET",
+        cache: "no-store"
     const m = mac16enc.charCodeAt(i);
     const k = FIXED_KEY.charCodeAt(i % FIXED_KEY.length);
     let p = String.fromCharCode(m | k);
