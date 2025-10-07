@@ -47,8 +47,18 @@ function normalizeMac(value) {
 function buildResponse(obj) {
   const output = ContentService.createTextOutput(JSON.stringify(obj));
   output.setMimeType(ContentService.MimeType.JSON);
-  output.setHeader('Access-Control-Allow-Origin', '*');
-  output.setHeader('Access-Control-Allow-Methods', 'POST');
-  output.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  setHeaderCompat(output, 'Access-Control-Allow-Origin', '*');
+  setHeaderCompat(output, 'Access-Control-Allow-Methods', 'POST');
+  setHeaderCompat(output, 'Access-Control-Allow-Headers', 'Content-Type');
   return output;
+}
+
+function setHeaderCompat(output, name, value) {
+  if (typeof output.setHeader === 'function') {
+    output.setHeader(name, value);
+    return;
+  }
+  if (typeof output.appendHeader === 'function') {
+    output.appendHeader(name, value);
+  }
 }
