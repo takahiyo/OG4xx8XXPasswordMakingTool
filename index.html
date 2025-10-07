@@ -78,9 +78,9 @@
       const params = new URLSearchParams({ mac: macRaw });
 
       fetch(apiUrl, {
-                method: "POST",
+        method: "POST",
         headers: {
-          "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"
+          "Content-Type": "application/x-www-form-urlencoded"
         },
         body: params.toString(),
         cache: "no-store"
