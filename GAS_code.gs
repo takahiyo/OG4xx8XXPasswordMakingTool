@@ -3,11 +3,17 @@ const FIXED_KEY = 'VoIPGateway48231';
 
 function doPost(e) {
   try {
-    const rawBody = e && e.postData ? e.postData.contents : '';
-    const payload = rawBody ? JSON.parse(rawBody) : {};
-    const macRaw = typeof payload.mac === 'string' ? payload.mac : '';
-    const result = generatePassword(macRaw);
-    return buildResponse(result);
+    const macRaw = extractMac(e);
+    return respondWithMac(macRaw);
+  } catch (error) {
+    return buildResponse({ error: '内部エラーが発生しました。' });
+  }
+}
+
+function doGet(e) {
+  try {
+    const macRaw = extractMac(e);
+    return respondWithMac(macRaw);
   } catch (error) {
     return buildResponse({ error: '内部エラーが発生しました。' });
   }
@@ -44,14 +50,68 @@ function normalizeMac(value) {
   if (!value) return '';
   return value.replace(/[-:\.\s]/g, '').toUpperCase();
 }
+function respondWithMac(macRaw) {
+  const result = generatePassword(macRaw);
+  return buildResponse(result);
+}
+
+function extractMac(e) {
+  if (!e) {
+    return '';
+  }
+
+  if (e.parameter && typeof e.parameter.mac === 'string' && e.parameter.mac) {
+    return e.parameter.mac;
+  }
+
+  if (e.postData && typeof e.postData.contents === 'string') {
+    const type = (e.postData.type || '').toLowerCase();
+    const contents = e.postData.contents;
+    const treatAsJson = !type || type.indexOf('application/json') !== -1;
+    const treatAsForm = !type || type.indexOf('application/x-www-form-urlencoded') !== -1;
+
+    if (contents) {
+      if (treatAsJson) {
+        try {
+          const parsed = JSON.parse(contents);
+          if (parsed && typeof parsed.mac === 'string') {
+            return parsed.mac;
+          }
+        } catch (err) {
+          // フォーマットエラー時は他の形式を確認
+        }
+      }
+
+      if (treatAsForm) {
+        const params = Utilities.parseQueryString(contents);
+        if (params.mac) {
+          return String(params.mac);
+        }
+      }
+    }
+  }
+
+  return '';
+}
+
 
 function buildResponse(obj) {
   const output = ContentService.createTextOutput(JSON.stringify(obj));
-  output.setMimeType(ContentService.MimeType.JSON);
   setHeaderCompat(output, 'Access-Control-Allow-Origin', '*');
-  setHeaderCompat(output, 'Access-Control-Allow-Methods', 'POST');
+  setHeaderCompat(output, 'Access-Control-Allow-Methods', 'GET, POST');
+  setHeaderCompat(output, 'Access-Control-Allow-Headers', 'Content-Type');
   setHeaderCompat(output, 'Access-Control-Allow-Headers', 'Content-Type');
   return output;
+
+function setHeaderCompat(output, name, value) {
+  if (typeof output.setHeader === 'function') {
+    output.setHeader(name, value);
+    return;
+  }
+  if (typeof output.appendHeader === 'function') {
+    output.appendHeader(name, value);
+  }
+}
 }
 
 function setHeaderCompat(output, name, value) {
