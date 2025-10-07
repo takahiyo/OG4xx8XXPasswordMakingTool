@@ -2,28 +2,30 @@
 const FIXED_KEY = 'VoIPGateway48231';
 
 function doPost(e) {
-  try {
-    const macRaw = extractMac(e);
-    return respondWithMac(macRaw);
-  } catch (error) {
-    return buildResponse({ error: '内部エラーが発生しました。' });
-  }
+  return handleRequest(e);
 }
 
 
 function doGet(e) {
+  return handleRequest(e);
+}
+
+
+function doOptions() {
+  return buildResponse({}, true);
+}
+
+
+function handleRequest(e) {
   try {
     const macRaw = extractMac(e);
-    return respondWithMac(macRaw);
+    const result = generatePassword(macRaw);
+    return buildResponse(result);
   } catch (error) {
     return buildResponse({ error: '内部エラーが発生しました。' });
   }
 }
 
-function respondWithMac(macRaw) {
-  const result = generatePassword(macRaw);
-  return buildResponse(result);
-}
 
 function generatePassword(macRaw) {
   const normalized = normalizeMac(macRaw);
@@ -109,14 +111,16 @@ function normalizeMac(value) {
   return cleaned;
 }
 
-function buildResponse(obj) {
-  const output = ContentService.createTextOutput(JSON.stringify(obj));
+function buildResponse(obj, isOptions) {
+  const payload = isOptions ? '' : JSON.stringify(obj);
+  const output = ContentService.createTextOutput(payload);
   setHeaderCompat(output, 'Access-Control-Allow-Origin', '*');
-  if (typeof output.setMimeType === 'function') {
+  if (!isOptions && typeof output.setMimeType === 'function') {
     output.setMimeType(ContentService.MimeType.JSON);
   }
-  setHeaderCompat(output, 'Access-Control-Allow-Methods', 'GET, POST');
+  setHeaderCompat(output, 'Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   setHeaderCompat(output, 'Access-Control-Allow-Headers', 'Content-Type');
+  setHeaderCompat(output, 'Access-Control-Max-Age', '3600');
   return output;
 }
 
