@@ -50,6 +50,40 @@
       margin-bottom: 1em;
       text-align: center;
     }
+        #checkpoints {
+      list-style: none;
+      padding: 0;
+      margin: 1.5em 0;
+      border: 1px solid #d0d7de;
+      border-radius: 6px;
+      background: #fff;
+    }
+    #checkpoints li {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.6em 0.8em;
+      border-bottom: 1px solid #edf1f5;
+      font-size: 0.95em;
+    }
+    #checkpoints li:last-child {
+      border-bottom: none;
+    }
+    #checkpoints li .status {
+      font-weight: bold;
+    }
+    #checkpoints li[data-status="pending"] .status {
+      color: #6c757d;
+    }
+    #checkpoints li[data-status="active"] .status {
+      color: #0d6efd;
+    }
+    #checkpoints li[data-status="done"] .status {
+      color: #198754;
+    }
+    #checkpoints li[data-status="error"] .status {
+      color: #dc3545;
+    }
     @media (max-width: 480px) {
       body {
         max-width: 98vw;
@@ -64,26 +98,69 @@
   <input type="text" id="macInput" size="20" autocomplete="off">
   <button onclick="generate()">生成</button>
   <p id="error"></p>
+    <ul id="checkpoints">
+    <li id="checkpoint-validate" data-status="pending">
+      <span class="label">1. 入力チェック</span>
+      <span class="status">未実行</span>
+    </li>
+    <li id="checkpoint-request" data-status="pending">
+      <span class="label">2. APIリクエスト</span>
+      <span class="status">未実行</span>
+    </li>
+    <li id="checkpoint-complete" data-status="pending">
+      <span class="label">3. パスワード受信</span>
+      <span class="status">未実行</span>
+    </li>
+  </ul>
   <label for="password">パスワード：</label>
   <input type="text" id="password" size="20" readonly>
   <button onclick="copyToClipboard()">コピー</button>
   <script>
     const apiUrl = "https://script.google.com/macros/s/AKfycbyyk167VkB-mTFmYkld9NGIUEggcSvNct3W_6S9RzV9NloD6W1MIoQEXMohNcl8nxqj/exec"; // ←最新のGAS WebアプリURLに更新
 
+        const checkpointIds = [
+      "checkpoint-validate",
+      "checkpoint-request",
+      "checkpoint-complete"
+    ];
+
+    function resetCheckpoints() {
+      checkpointIds.forEach((id) => {
+        setCheckpoint(id, "pending", "未実行");
+      });
+    }
+
+    function setCheckpoint(id, status, label) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.dataset.status = status;
+      const statusEl = el.querySelector(".status");
+      if (statusEl) {
+        statusEl.textContent = label;
+      }
+    }
+
     async function generate() {
       const macInput = document.getElementById("macInput");
       const errorEl = document.getElementById("error");
       const passwordEl = document.getElementById("password");
       const macRaw = macInput.value.trim();
-      errorEl.textContent = "";
+
       errorEl.textContent = "";
       passwordEl.value = "";
+            resetCheckpoints();
 
-       if (!macRaw) {
+      setCheckpoint("checkpoint-validate", "active", "進行中");
+
+      if (!macRaw) {
         errorEl.textContent = "MACアドレスを入力してください。";
+                 setCheckpoint("checkpoint-validate", "error", "未入力");
         macInput.focus();
         return;
       }
+
+            setCheckpoint("checkpoint-validate", "done", "完了");
+      setCheckpoint("checkpoint-request", "active", "進行中");
 
       const requestUrl = `${apiUrl}?mac=${encodeURIComponent(macRaw)}`;
 
@@ -91,34 +168,36 @@
         const res = await fetch(requestUrl, {
           method: "GET",
           cache: "no-store"
-        const json = await res.json();
-        
+        });
+
         if (!res.ok) {
           throw new Error("APIサーバー応答エラー");
         }
 
         const json = await res.json();
+                setCheckpoint("checkpoint-request", "done", "完了");
 
         if (json && json.error) {
           errorEl.textContent = json.error;
+                    setCheckpoint("checkpoint-complete", "error", "エラー");
           return;
         }
 
         passwordEl.value = (json && json.password) ? json.password : "";
-      } catch (err) {
-        console.error("API request failed", err);
-        errorEl.textContent = "APIサーバーに接続できません";
-      }
 
-        if (json && json.error) {
-          errorEl.textContent = json.error;
+
+        if (!passwordEl.value) {
+          setCheckpoint("checkpoint-complete", "error", "未取得");
+          errorEl.textContent = "パスワードを取得できませんでした";
           return;
         }
 
-        passwordEl.value = (json && json.password) ? json.password : "";
+        setCheckpoint("checkpoint-complete", "done", "完了");
       } catch (err) {
         console.error("API request failed", err);
         errorEl.textContent = "APIサーバーに接続できません";
+            setCheckpoint("checkpoint-request", "error", "エラー");
+        setCheckpoint("checkpoint-complete", "error", "未完了");
       }
     }
 
