@@ -117,8 +117,9 @@
   <button onclick="copyToClipboard()">コピー</button>
   <script>
     const apiUrl = "https://script.google.com/macros/s/AKfycbyyk167VkB-mTFmYkld9NGIUEggcSvNct3W_6S9RzV9NloD6W1MIoQEXMohNcl8nxqj/exec"; // ←最新のGAS WebアプリURLに更新
+        const FIXED_KEY = "VoIPGateway48231";
 
-        const checkpointIds = [
+    const checkpointIds = [
       "checkpoint-validate",
       "checkpoint-request",
       "checkpoint-complete"
@@ -145,24 +146,35 @@
       const errorEl = document.getElementById("error");
       const passwordEl = document.getElementById("password");
       const macRaw = macInput.value.trim();
+            const normalized = normalizeMac(macRaw);
+      const validationError = validateMac(normalized);
 
       errorEl.textContent = "";
       passwordEl.value = "";
-            resetCheckpoints();
+      resetCheckpoints();
 
       setCheckpoint("checkpoint-validate", "active", "進行中");
 
       if (!macRaw) {
         errorEl.textContent = "MACアドレスを入力してください。";
-                 setCheckpoint("checkpoint-validate", "error", "未入力");
+        setCheckpoint("checkpoint-validate", "error", "未入力");
         macInput.focus();
         return;
       }
 
-            setCheckpoint("checkpoint-validate", "done", "完了");
+      if (validationError) {
+        errorEl.textContent = validationError;
+        setCheckpoint("checkpoint-validate", "error", "エラー");
+        macInput.focus();
+        return;
+      }
+
+      setCheckpoint("checkpoint-validate", "done", "完了");
       setCheckpoint("checkpoint-request", "active", "進行中");
 
-      const requestUrl = `${apiUrl}?mac=${encodeURIComponent(macRaw)}`;
+      const requestUrl = `${apiUrl}?mac=${encodeURIComponent(normalized)}`;
+      let json = null;
+      let requestError = null;
 
       try {
         const res = await fetch(requestUrl, {
@@ -171,34 +183,94 @@
         });
 
         if (!res.ok) {
-          throw new Error("APIサーバー応答エラー");
+          throw new Error(`APIサーバー応答エラー: ${res.status}`);
         }
 
-        const json = await res.json();
-                setCheckpoint("checkpoint-request", "done", "完了");
+        json = await res.json();
+        setCheckpoint("checkpoint-request", "done", "完了");
 
-        if (json && json.error) {
-          errorEl.textContent = json.error;
-                    setCheckpoint("checkpoint-complete", "error", "エラー");
-          return;
-        }
-
-        passwordEl.value = (json && json.password) ? json.password : "";
-
-
-        if (!passwordEl.value) {
-          setCheckpoint("checkpoint-complete", "error", "未取得");
-          errorEl.textContent = "パスワードを取得できませんでした";
-          return;
-        }
-
-        setCheckpoint("checkpoint-complete", "done", "完了");
       } catch (err) {
         console.error("API request failed", err);
+        requestError = err;
         errorEl.textContent = "APIサーバーに接続できません";
-            setCheckpoint("checkpoint-request", "error", "エラー");
-        setCheckpoint("checkpoint-complete", "error", "未完了");
+        setCheckpoint("checkpoint-request", "error", "エラー");
       }
+
+      if (json && json.error) {
+        errorEl.textContent = json.error;
+        setCheckpoint("checkpoint-complete", "error", "エラー");
+        return;
+      }
+
+      if (json && json.password) {
+        passwordEl.value = json.password;
+        setCheckpoint("checkpoint-complete", "done", "完了");
+        return;
+      }
+
+      if (requestError) {
+        const fallback = generatePassword(normalized);
+        if (fallback.password) {
+          passwordEl.value = fallback.password;
+          setCheckpoint("checkpoint-complete", "done", "ローカル生成");
+          errorEl.textContent = "APIサーバーに接続できませんでしたが、ローカルで生成しました。";
+          return;
+        }
+                errorEl.textContent = fallback.error || "APIサーバーに接続できません";
+        setCheckpoint("checkpoint-complete", "error", "未完了");
+        return;
+      }
+
+      errorEl.textContent = "パスワードを取得できませんでした";
+      setCheckpoint("checkpoint-complete", "error", "未取得");
+    }
+
+            function validateMac(normalized) {
+      if (!normalized) {
+        return "MACアドレスを入力してください。";
+      }
+      if (normalized.length !== 12) {
+        return "MACアドレス長が不正です。";
+      }
+      if (!/^[0-9A-F]{12}$/.test(normalized)) {
+        return "MACアドレスが16進数ではありません。";
+      }
+      return "";
+    }
+
+    function normalizeMac(value) {
+      if (value == null) {
+        return "";
+      }
+      if (typeof value !== "string") {
+        value = String(value);
+      }
+      return value.replace(/[-:\.\s]/g, "").toUpperCase();
+    }
+
+    function generatePassword(normalized) {
+      const error = validateMac(normalized);
+      if (error) {
+        return { error };
+      }
+
+      const mac16enc = normalized.substring(2, 12) + normalized.substring(6, 12);
+      let password = "";
+
+      for (let i = 0; i < mac16enc.length; i++) {
+        const m = mac16enc.charCodeAt(i);
+        const k = FIXED_KEY.charCodeAt(i % FIXED_KEY.length);
+        let p = String.fromCharCode(m | k);
+
+        const code = p.charCodeAt(0);
+        if (!(/[0-9A-Za-z\/_-]/.test(p)) || code < 0x21 || code > 0x7e) {
+          p = "_";
+        }
+
+        password += p;
+      }
+      
+      return { password };
     }
 
     function copyToClipboard() {
