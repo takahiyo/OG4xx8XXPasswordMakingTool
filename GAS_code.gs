@@ -5,29 +5,23 @@ function doPost(e) {
   return handleRequest(e);
 }
 
-
-function doOptions() {
+function doGet(e) {
   return handleRequest(e);
 }
 
-
 function doOptions() {
   return buildResponse({}, true);
 }
-
-
-function handleRequest(e) {
-  return buildResponse({}, true);
-}
-    const result = generatePassword(macRaw);
-    return buildResponse(result);
 
 function handleRequest(e) {
   try {
     const macRaw = extractMac(e);
     const result = generatePassword(macRaw);
-
-
+    return buildResponse(result);
+  } catch (error) {
+    return buildResponse({ error: '内部エラーが発生しました。' });
+  }
+}
 
 function generatePassword(macRaw) {
   const normalized = normalizeMac(macRaw);
@@ -52,13 +46,12 @@ function generatePassword(macRaw) {
     let p = String.fromCharCode(m | k);
 
     const code = p.charCodeAt(0);
-    if (!(/[0-9A-Za-z\/_-]/.test(p)) || code < 0x21 || code > 0x7e) {
+    if (!(/[0-9A-Za-z\\/_-]/.test(p)) || code < 0x21 || code > 0x7e) {
       p = '_';
     }
 
     password += p;
   }
-
 
   return { password };
 }
@@ -109,18 +102,16 @@ function normalizeMac(value) {
   if (typeof value !== 'string') {
     value = String(value);
   }
-  const cleaned = value.replace(/[-:\.\s]/g, '').toUpperCase();
+  const cleaned = value.replace(/[-:\\.\\s]/g, '').toUpperCase();
   return cleaned;
+}
+
 function buildResponse(obj, isOptions) {
   const payload = isOptions ? '' : JSON.stringify(obj);
   const output = ContentService.createTextOutput(payload);
-function buildResponse(obj, isOptions) {
-  if (!isOptions && typeof output.setMimeType === 'function') {
-  const output = ContentService.createTextOutput(payload);
   setHeaderCompat(output, 'Access-Control-Allow-Origin', '*');
-  setHeaderCompat(output, 'Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  if (!isOptions && typeof output.setMimeType === 'function') {
     output.setMimeType(ContentService.MimeType.JSON);
-  setHeaderCompat(output, 'Access-Control-Max-Age', '3600');
   }
   setHeaderCompat(output, 'Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   setHeaderCompat(output, 'Access-Control-Allow-Headers', 'Content-Type');
