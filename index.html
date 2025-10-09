@@ -163,6 +163,7 @@
         }
         return data.password;
       } catch (error) {
+        
         if (error instanceof SyntaxError) {
           throw new Error("サーバー応答の解析に失敗しました。");
         }
