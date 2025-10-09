@@ -6,6 +6,9 @@ function doPost(e) {
 }
 
 function doGet(e) {
+  if (e && e.parameter && e.parameter.mode === 'bridge') {
+    return buildBridgePage();
+  }
   return handleRequest(e);
 }
 
@@ -17,10 +20,6 @@ function handleRequest(e) {
   try {
     const macRaw = extractMac(e);
     const result = generatePassword(macRaw);
-    const callback = extractCallback(e);
-    if (callback) {
-      return buildJsonpResponse(callback, result);
-    }
     const callback = extractCallback(e);
     if (callback) {
       return buildJsonpResponse(callback, result);
@@ -74,13 +73,11 @@ function extractMac(e) {
   }
 
   if (e.postData && typeof e.postData.contents === 'string') {
-    const treatAsPlain = type.indexOf('text/plain') !== -1;
     const type = (e.postData.type || '').toLowerCase();
     const contents = e.postData.contents;
     const treatAsJson = !type || type.indexOf('application/json') !== -1;
     const treatAsForm = !type || type.indexOf('application/x-www-form-urlencoded') !== -1;
     const treatAsPlain = type.indexOf('text/plain') !== -1;
-        const treatAsPlain = type.indexOf('text/plain') !== -1;
 
     if (contents) {
       if (treatAsJson) {
@@ -94,67 +91,34 @@ function extractMac(e) {
         }
       }
 
-
-      if (treatAsPlain) {
-        return contents.trim();
-      }
       if (treatAsForm) {
         const params = Utilities.parseQueryString(contents);
         if (params.mac) {
           return String(params.mac);
         }
-function extractCallback(e) {
-function extractCallback(e) {
-  if (!e || !e.parameter) {
-    return '';
-  }
-  const callback = e.parameter.callback;
-  if (typeof callback !== 'string') {
-    return '';
-  }
-  return callback.replace(/[^0-9A-Za-z_\.]/g, '').substring(0, 100);
-}
-
-  if (!e || !e.parameter) {
-    return '';
-  }
-  const callback = e.parameter.callback;
-  if (typeof callback !== 'string') {
-    return '';
-  }
-  return callback.replace(/[^0-9A-Za-z_\.]/g, '').substring(0, 100);
-}
-
       }
-      
+
       if (treatAsPlain) {
         return contents.trim();
       }
     }
-function extractCallback(e) {
-  if (!e || !e.parameter) {
-    return '';
-  }
-  const callback = e.parameter.callback;
-  if (typeof callback !== 'string') {
-    return '';
-  }
-  return callback.replace(/[^0-9A-Za-z_\.]/g, '').substring(0, 100);
-}
-
   }
 
   return '';
 }
 
-function normalizeMac(value) {
-
-function buildJsonpResponse(callback, obj) {
-  const safeCallback = callback || 'callback';
-  const payload = `${safeCallback}(${JSON.stringify(obj)});`;
-  return ContentService.createTextOutput(payload)
-    .setMimeType(ContentService.MimeType.JAVASCRIPT);
+function extractCallback(e) {
+  if (!e || !e.parameter) {
+    return '';
+  }
+  const callback = e.parameter.callback;
+  if (typeof callback !== 'string') {
+    return '';
+  }
+  return callback.replace(/[^0-9A-Za-z_\.]/g, '').substring(0, 100);
 }
+
+function normalizeMac(value) {
   if (value == null) {
     return '';
   }
@@ -168,29 +132,35 @@ function buildJsonpResponse(callback, obj) {
 function buildResponse(obj, isOptions) {
   const payload = isOptions ? '' : JSON.stringify(obj);
   const output = ContentService.createTextOutput(payload);
-  setHeaderCompat(output, 'Access-Control-Allow-Origin', '*');
   if (!isOptions && typeof output.setMimeType === 'function') {
     output.setMimeType(ContentService.MimeType.JSON);
   }
-  setHeaderCompat(output, 'Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  setHeaderCompat(output, 'Access-Control-Allow-Headers', 'Content-Type');
-  setHeaderCompat(output, 'Access-Control-Max-Age', '3600');
+  if (typeof output.setHeader === 'function') {
+    output.setHeader('Access-Control-Allow-Origin', '*');
+    output.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    output.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    output.setHeader('Access-Control-Max-Age', '3600');
+  }
   return output;
 }
-
-function setHeaderCompat(output, name, value) {
-  if (typeof output.setHeader === 'function') {
-    output.setHeader(name, value);
-    return;
 
 function buildJsonpResponse(callback, obj) {
   const safeCallback = callback || 'callback';
   const payload = `${safeCallback}(${JSON.stringify(obj)});`;
-  return ContentService.createTextOutput(payload)
+  const output = ContentService.createTextOutput(payload)
     .setMimeType(ContentService.MimeType.JAVASCRIPT);
+  if (typeof output.setHeader === 'function') {
+    output.setHeader('Cache-Control', 'no-store, max-age=0');
+  }
+  return output;
 }
-  }
-  if (typeof output.appendHeader === 'function') {
-    output.appendHeader(name, value);
-  }
+
+function buildBridgePage() {
+  return HtmlService.createHtmlOutputFromFile('bridge')
+    .setTitle('Password Bridge')
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+function generatePasswordForBridge(mac) {
+  return generatePassword(mac);
 }
