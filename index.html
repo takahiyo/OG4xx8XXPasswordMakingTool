@@ -72,7 +72,7 @@
   <input type="text" id="password" size="20" readonly>
   <button id="copyBtn">コピー</button>
   <script>
-    const GAS_ENDPOINT = "https://script.google.com/macros/s/AKfycbxpKIuIrn_x2Rmlr7NDiuCx2sk2NZKruiTwW1dFBCJfr2VeFd6hsUxri0qQh0PVEdJT/exec";
+    const GAS_ENDPOINT = "https://script.google.com/macros/s/DEPLOYMENT_ID/exec";
 
     document.getElementById("generateBtn").addEventListener("click", handleGenerate);
     document.getElementById("copyBtn").addEventListener("click", copyToClipboard);
@@ -96,12 +96,12 @@
       }
 
       try {
-        const password = await requestPassword(normalized);
+        const password = await requestPasswordViaJsonp(normalized);
         passwordEl.value = password;
       } catch (err) {
         errorEl.textContent = err.message || "サーバー通信に失敗しました。";
-      } catch (err) {
         macInput.focus();
+      }
     }
 
     function validateMac(normalized) {
@@ -127,107 +127,86 @@
       return value.replace(/[-:\.\s]/g, "").toUpperCase();
     }
 
+    function copyToClipboard() {
+      const pwd = document.getElementById("password");
+      if (!pwd.value) {
+        alert("パスワードがありません");
+        return;
+      }
+      if (!navigator.clipboard || typeof navigator.clipboard.writeText !== "function") {
+        const textarea = document.createElement("textarea");
+        textarea.value = pwd.value;
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textarea);
+        alert("クリップボードにコピーしました");
+        return;
+      }
+      navigator.clipboard.writeText(pwd.value).then(() => {
+        alert("クリップボードにコピーしました");
+      }).catch(() => {
+        alert("クリップボードへのコピーに失敗しました");
+      });
+    }
 
+    function requestPasswordViaJsonp(mac) {
+      return new Promise((resolve, reject) => {
+        const callbackName = `__gasJsonpCallback_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
+        let timerId;
+        let script;
 
-        const data = await response.json();
-        if (data.error) {
-          throw new Error(data.error);
-        }
-        if (!data.password) {
-          throw new Error("パスワードを取得できませんでした。");
-        }
-        return data.password;
-      } catch (error) {
-        
-    async function requestPassword(mac) {
-      const attempts = buildFetchAttempts(mac);
-      const failureReasons = [];
-
-      for (const attempt of attempts) {
-        try {
-          return await fetchPassword(attempt);
-        } catch (error) {
-          if (error && error.fatal) {
-            throw error;
+        const cleanup = () => {
+          if (timerId) {
+            clearTimeout(timerId);
+            timerId = null;
           }
-          failureReasons.push(`${attempt.label}: ${error.message || error}`);
-        }
-      }
+          if (script && script.parentNode) {
+            script.parentNode.removeChild(script);
+            script = null;
+          }
+          if (window[callbackName]) {
+            delete window[callbackName];
+          }
+        };
 
-      throw new Error(`GASと通信できませんでした。(${failureReasons.join(" / ") || "通信エラー"})`);
-    }
+        window[callbackName] = (data) => {
+          cleanup();
+          if (!data) {
+            reject(new Error("応答が不正です。"));
+            return;
+          }
+          if (data.error) {
+            reject(new Error(data.error));
+            return;
+          }
+          if (!data.password) {
+            reject(new Error("パスワードが取得できませんでした。"));
+            return;
+          }
+          resolve(data.password);
+        };
 
-    function buildFetchAttempts(mac) {
-      const getUrl = new URL(GAS_ENDPOINT);
-      getUrl.searchParams.set("mac", mac);
-      getUrl.searchParams.set("ts", Date.now().toString(36));
+        const url = new URL(GAS_ENDPOINT);
+        url.searchParams.set("mac", mac);
+        url.searchParams.set("callback", callbackName);
+        url.searchParams.set("ts", Date.now().toString(36));
 
-      return [
-        {
-          label: "GET",
-          url: getUrl.toString(),
-          options: {
-            method: "GET",
-            mode: "cors",
-            cache: "no-store",
-          },
-        },
-        {
-          label: "POST(text/plain)",
-          url: GAS_ENDPOINT,
-          options: {
-            method: "POST",
-            mode: "cors",
-            cache: "no-store",
-            headers: {
-              "Content-Type": "text/plain;charset=utf-8",
-            },
-            body: mac,
-          },
-        },
-      ];
-    }
+        script = document.createElement("script");
+        script.src = url.toString();
+        script.async = true;
+        script.onerror = () => {
+          cleanup();
+          reject(new Error("スクリプトの読み込みに失敗しました。"));
+        };
 
-    async function fetchPassword(attempt) {
-      let response;
-      try {
-        response = await fetch(attempt.url, attempt.options);
-      } catch (error) {
-        throw wrapError(error.message || "接続に失敗しました。", { fatal: false });
-      }
+        timerId = setTimeout(() => {
+          cleanup();
+          reject(new Error("応答がタイムアウトしました。"));
+        }, 8000);
 
-      if (!response.ok) {
-        throw wrapError(`HTTP ${response.status}`, { fatal: false });
-      }
-
-      let data;
-      try {
-        data = await response.json();
-      } catch (error) {
-        throw wrapError("サーバー応答の解析に失敗しました。", { fatal: false });
-      }
-
-      if (data.error) {
-        throw wrapError(data.error, { fatal: true });
-      }
-      if (!data.password) {
-        throw wrapError("パスワードが取得できませんでした。", { fatal: true });
-      }
-
-      return data.password;
-    }
-
-    function wrapError(message, { fatal }) {
-      const error = new Error(message);
-      error.fatal = !!fatal;
-      return error;
-    }
-        
-        if (error instanceof SyntaxError) {
-          throw new Error("サーバー応答の解析に失敗しました。");
-        }
-        throw error;
-      }
+        document.body.appendChild(script);
+      });
     }
   </script>
 </body>
