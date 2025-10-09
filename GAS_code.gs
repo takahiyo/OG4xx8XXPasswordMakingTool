@@ -21,6 +21,10 @@ function handleRequest(e) {
     if (callback) {
       return buildJsonpResponse(callback, result);
     }
+    const callback = extractCallback(e);
+    if (callback) {
+      return buildJsonpResponse(callback, result);
+    }
     return buildResponse(result);
   } catch (error) {
     return buildResponse({ error: '内部エラーが発生しました。' });
@@ -70,6 +74,7 @@ function extractMac(e) {
   }
 
   if (e.postData && typeof e.postData.contents === 'string') {
+    const treatAsPlain = type.indexOf('text/plain') !== -1;
     const type = (e.postData.type || '').toLowerCase();
     const contents = e.postData.contents;
     const treatAsJson = !type || type.indexOf('application/json') !== -1;
@@ -89,12 +94,27 @@ function extractMac(e) {
         }
       }
 
+
+      if (treatAsPlain) {
+        return contents.trim();
+      }
       if (treatAsForm) {
         const params = Utilities.parseQueryString(contents);
         if (params.mac) {
           return String(params.mac);
         }
 function extractCallback(e) {
+function extractCallback(e) {
+  if (!e || !e.parameter) {
+    return '';
+  }
+  const callback = e.parameter.callback;
+  if (typeof callback !== 'string') {
+    return '';
+  }
+  return callback.replace(/[^0-9A-Za-z_\.]/g, '').substring(0, 100);
+}
+
   if (!e || !e.parameter) {
     return '';
   }
@@ -128,6 +148,13 @@ function extractCallback(e) {
 }
 
 function normalizeMac(value) {
+
+function buildJsonpResponse(callback, obj) {
+  const safeCallback = callback || 'callback';
+  const payload = `${safeCallback}(${JSON.stringify(obj)});`;
+  return ContentService.createTextOutput(payload)
+    .setMimeType(ContentService.MimeType.JAVASCRIPT);
+}
   if (value == null) {
     return '';
   }
