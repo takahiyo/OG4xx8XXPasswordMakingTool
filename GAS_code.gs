@@ -17,6 +17,10 @@ function handleRequest(e) {
   try {
     const macRaw = extractMac(e);
     const result = generatePassword(macRaw);
+    const callback = extractCallback(e);
+    if (callback) {
+      return buildJsonpResponse(callback, result);
+    }
     return buildResponse(result);
   } catch (error) {
     return buildResponse({ error: '内部エラーが発生しました。' });
@@ -70,6 +74,7 @@ function extractMac(e) {
     const contents = e.postData.contents;
     const treatAsJson = !type || type.indexOf('application/json') !== -1;
     const treatAsForm = !type || type.indexOf('application/x-www-form-urlencoded') !== -1;
+    const treatAsPlain = type.indexOf('text/plain') !== -1;
         const treatAsPlain = type.indexOf('text/plain') !== -1;
 
     if (contents) {
@@ -89,12 +94,34 @@ function extractMac(e) {
         if (params.mac) {
           return String(params.mac);
         }
+function extractCallback(e) {
+  if (!e || !e.parameter) {
+    return '';
+  }
+  const callback = e.parameter.callback;
+  if (typeof callback !== 'string') {
+    return '';
+  }
+  return callback.replace(/[^0-9A-Za-z_\.]/g, '').substring(0, 100);
+}
+
       }
       
       if (treatAsPlain) {
         return contents.trim();
       }
     }
+function extractCallback(e) {
+  if (!e || !e.parameter) {
+    return '';
+  }
+  const callback = e.parameter.callback;
+  if (typeof callback !== 'string') {
+    return '';
+  }
+  return callback.replace(/[^0-9A-Za-z_\.]/g, '').substring(0, 100);
+}
+
   }
 
   return '';
@@ -128,6 +155,13 @@ function setHeaderCompat(output, name, value) {
   if (typeof output.setHeader === 'function') {
     output.setHeader(name, value);
     return;
+
+function buildJsonpResponse(callback, obj) {
+  const safeCallback = callback || 'callback';
+  const payload = `${safeCallback}(${JSON.stringify(obj)});`;
+  return ContentService.createTextOutput(payload)
+    .setMimeType(ContentService.MimeType.JAVASCRIPT);
+}
   }
   if (typeof output.appendHeader === 'function') {
     output.appendHeader(name, value);
