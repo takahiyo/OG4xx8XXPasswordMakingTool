@@ -100,9 +100,8 @@
         passwordEl.value = password;
       } catch (err) {
         errorEl.textContent = err.message || "サーバー通信に失敗しました。";
+      } catch (err) {
         macInput.focus();
-      }
-
     }
 
     function validateMac(normalized) {
@@ -129,30 +128,6 @@
     }
 
 
-    function copyToClipboard() {
-      const pwd = document.getElementById("password");
-      if (!pwd.value) {
-        alert("パスワードがありません");
-        return;
-      }
-      navigator.clipboard.writeText(pwd.value).then(() => {
-        alert("クリップボードにコピーしました");
-      });
-    }
-    
-    async function requestPassword(mac) {
-      try {
-        const response = await fetch(GAS_ENDPOINT, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ mac }),
-        });
-
-        if (!response.ok) {
-          throw new Error("サーバーエラーが発生しました。(" + response.status + ")");
-        }
 
         const data = await response.json();
         if (data.error) {
@@ -163,6 +138,90 @@
         }
         return data.password;
       } catch (error) {
+        
+    async function requestPassword(mac) {
+      const attempts = buildFetchAttempts(mac);
+      const failureReasons = [];
+
+      for (const attempt of attempts) {
+        try {
+          return await fetchPassword(attempt);
+        } catch (error) {
+          if (error && error.fatal) {
+            throw error;
+          }
+          failureReasons.push(`${attempt.label}: ${error.message || error}`);
+        }
+      }
+
+      throw new Error(`GASと通信できませんでした。(${failureReasons.join(" / ") || "通信エラー"})`);
+    }
+
+    function buildFetchAttempts(mac) {
+      const getUrl = new URL(GAS_ENDPOINT);
+      getUrl.searchParams.set("mac", mac);
+      getUrl.searchParams.set("ts", Date.now().toString(36));
+
+      return [
+        {
+          label: "GET",
+          url: getUrl.toString(),
+          options: {
+            method: "GET",
+            mode: "cors",
+            cache: "no-store",
+          },
+        },
+        {
+          label: "POST(text/plain)",
+          url: GAS_ENDPOINT,
+          options: {
+            method: "POST",
+            mode: "cors",
+            cache: "no-store",
+            headers: {
+              "Content-Type": "text/plain;charset=utf-8",
+            },
+            body: mac,
+          },
+        },
+      ];
+    }
+
+    async function fetchPassword(attempt) {
+      let response;
+      try {
+        response = await fetch(attempt.url, attempt.options);
+      } catch (error) {
+        throw wrapError(error.message || "接続に失敗しました。", { fatal: false });
+      }
+
+      if (!response.ok) {
+        throw wrapError(`HTTP ${response.status}`, { fatal: false });
+      }
+
+      let data;
+      try {
+        data = await response.json();
+      } catch (error) {
+        throw wrapError("サーバー応答の解析に失敗しました。", { fatal: false });
+      }
+
+      if (data.error) {
+        throw wrapError(data.error, { fatal: true });
+      }
+      if (!data.password) {
+        throw wrapError("パスワードが取得できませんでした。", { fatal: true });
+      }
+
+      return data.password;
+    }
+
+    function wrapError(message, { fatal }) {
+      const error = new Error(message);
+      error.fatal = !!fatal;
+      return error;
+    }
         
         if (error instanceof SyntaxError) {
           throw new Error("サーバー応答の解析に失敗しました。");
