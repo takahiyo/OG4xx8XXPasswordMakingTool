@@ -46,7 +46,7 @@ function generatePassword(macRaw) {
     let p = String.fromCharCode(m | k);
 
     const code = p.charCodeAt(0);
-    if (!(/[0-9A-Za-z\\/_-]/.test(p)) || code < 0x21 || code > 0x7e) {
+    if (!(/[0-9A-Za-z\/_-]/.test(p)) || code < 0x21 || code > 0x7e) {
       p = '_';
     }
 
@@ -70,6 +70,7 @@ function extractMac(e) {
     const contents = e.postData.contents;
     const treatAsJson = !type || type.indexOf('application/json') !== -1;
     const treatAsForm = !type || type.indexOf('application/x-www-form-urlencoded') !== -1;
+        const treatAsPlain = type.indexOf('text/plain') !== -1;
 
     if (contents) {
       if (treatAsJson) {
@@ -89,6 +90,10 @@ function extractMac(e) {
           return String(params.mac);
         }
       }
+      
+      if (treatAsPlain) {
+        return contents.trim();
+      }
     }
   }
 
@@ -102,7 +107,7 @@ function normalizeMac(value) {
   if (typeof value !== 'string') {
     value = String(value);
   }
-  const cleaned = value.replace(/[-:\\.\\s]/g, '').toUpperCase();
+  const cleaned = value.replace(/[-:\.\s]/g, '').toUpperCase();
   return cleaned;
 }
 
