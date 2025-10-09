@@ -72,12 +72,12 @@
   <input type="text" id="password" size="20" readonly>
   <button id="copyBtn">コピー</button>
   <script>
-    const FIXED_KEY = "VoIPGateway48231";
+    const GAS_ENDPOINT = "https://script.google.com/macros/s/AKfycbxpKIuIrn_x2Rmlr7NDiuCx2sk2NZKruiTwW1dFBCJfr2VeFd6hsUxri0qQh0PVEdJT/exec";
 
     document.getElementById("generateBtn").addEventListener("click", handleGenerate);
     document.getElementById("copyBtn").addEventListener("click", copyToClipboard);
 
-    function handleGenerate() {
+    async function handleGenerate() {
       const macInput = document.getElementById("macInput");
       const errorEl = document.getElementById("error");
       const passwordEl = document.getElementById("password");
@@ -95,14 +95,14 @@
         return;
       }
 
-      const { password, error } = generatePassword(normalized);
-      if (error) {
-        errorEl.textContent = error;
+      try {
+        const password = await requestPassword(normalized);
+        passwordEl.value = password;
+      } catch (err) {
+        errorEl.textContent = err.message || "サーバー通信に失敗しました。";
         macInput.focus();
-        return;
       }
 
-      passwordEl.value = password;
     }
 
     function validateMac(normalized) {
@@ -128,30 +128,6 @@
       return value.replace(/[-:\.\s]/g, "").toUpperCase();
     }
 
-    function generatePassword(normalized) {
-      const error = validateMac(normalized);
-      if (error) {
-        return { error };
-      }
-
-      const mac16enc = normalized.substring(2, 12) + normalized.substring(6, 12);
-      let password = "";
-
-      for (let i = 0; i < mac16enc.length; i++) {
-        const m = mac16enc.charCodeAt(i);
-        const k = FIXED_KEY.charCodeAt(i % FIXED_KEY.length);
-        let p = String.fromCharCode(m | k);
-
-        const code = p.charCodeAt(0);
-        if (!(/[0-9A-Za-z\/_-]/.test(p)) || code < 0x21 || code > 0x7e) {
-          p = "_";
-        }
-
-        password += p;
-      }
-
-      return { password };
-    }
 
     function copyToClipboard() {
       const pwd = document.getElementById("password");
@@ -162,6 +138,36 @@
       navigator.clipboard.writeText(pwd.value).then(() => {
         alert("クリップボードにコピーしました");
       });
+    }
+    
+    async function requestPassword(mac) {
+      try {
+        const response = await fetch(GAS_ENDPOINT, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ mac }),
+        });
+
+        if (!response.ok) {
+          throw new Error("サーバーエラーが発生しました。(" + response.status + ")");
+        }
+
+        const data = await response.json();
+        if (data.error) {
+          throw new Error(data.error);
+        }
+        if (!data.password) {
+          throw new Error("パスワードを取得できませんでした。");
+        }
+        return data.password;
+      } catch (error) {
+        if (error instanceof SyntaxError) {
+          throw new Error("サーバー応答の解析に失敗しました。");
+        }
+        throw error;
+      }
     }
   </script>
 </body>
