@@ -72,10 +72,28 @@
   <input type="text" id="password" size="20" readonly>
   <button id="copyBtn">コピー</button>
   <script>
-    const GAS_ENDPOINT = "https://script.google.com/macros/s/AKfycbxpKIuIrn_x2Rmlr7NDiuCx2sk2NZKruiTwW1dFBCJfr2VeFd6hsUxri0qQh0PVEdJT/exec";
+    const GAS_ENDPOINT = "https://script.google.com/macros/s/DEPLOYMENT_ID/exec";
+    const GAS_BRIDGE_URL = `${GAS_ENDPOINT}?mode=bridge`;
+    const pendingRequests = new Map();
+    let bridgeWindow = null;
+    let bridgeOrigin = '';
+    let bridgeReadyResolve;
+    let bridgeReadyReject;
+    let bridgeReadyTimeoutId = null;
+
+    const bridgeReadyPromise = new Promise((resolve, reject) => {
+      bridgeReadyResolve = resolve;
+      bridgeReadyReject = reject;
+      bridgeReadyTimeoutId = setTimeout(() => {
+        bridgeReadyTimeoutId = null;
+        reject(new Error('GASブリッジの初期化に失敗しました。'));
+      }, 8000);
+    });
 
     document.getElementById("generateBtn").addEventListener("click", handleGenerate);
     document.getElementById("copyBtn").addEventListener("click", copyToClipboard);
+    window.addEventListener("message", handleBridgeMessage);
+    initializeBridge();
 
     async function handleGenerate() {
       const macInput = document.getElementById("macInput");
@@ -96,10 +114,10 @@
       }
 
       try {
-        const password = await requestPasswordViaJsonp(normalized);
+        const password = await requestPassword(normalized);
         passwordEl.value = password;
       } catch (err) {
-        errorEl.textContent = err.message || "サーバー通信に失敗しました。";
+        errorEl.textContent = err && err.message ? err.message : "サーバー通信に失敗しました。";
         macInput.focus();
       }
     }
@@ -150,14 +168,124 @@
       });
     }
 
-    function requestPasswordViaJsonp(mac) {
+    function initializeBridge() {
+      if (bridgeWindow) {
+        return;
+      }
+      const iframe = document.createElement("iframe");
+      iframe.src = GAS_BRIDGE_URL;
+      iframe.style.display = "none";
+      iframe.title = "GASブリッジ";
+      iframe.setAttribute("aria-hidden", "true");
+      iframe.addEventListener("error", () => {
+        if (bridgeReadyReject) {
+          bridgeReadyReject(new Error("GASブリッジの読み込みに失敗しました。"));
+          bridgeReadyReject = null;
+        }
+      });
+      document.body.appendChild(iframe);
+      bridgeWindow = iframe.contentWindow;
+    }
+
+    function handleBridgeMessage(event) {
+      if (!event || !event.data || typeof event.data.type !== "string") {
+        return;
+      }
+
+      if (event.data.type === "bridge-ready") {
+        if (event.source !== bridgeWindow) {
+          return;
+        }
+        bridgeOrigin = event.origin;
+        if (bridgeReadyTimeoutId !== null) {
+          clearTimeout(bridgeReadyTimeoutId);
+          bridgeReadyTimeoutId = null;
+        }
+        if (bridgeReadyResolve) {
+          bridgeReadyResolve();
+          bridgeReadyResolve = null;
+          bridgeReadyReject = null;
+        }
+        return;
+      }
+
+      if (!bridgeOrigin || event.origin !== bridgeOrigin || event.source !== bridgeWindow || event.data.type !== "bridge-result") {
+        return;
+      }
+
+      const requestId = event.data.requestId;
+      if (!requestId || !pendingRequests.has(requestId)) {
+        return;
+      }
+
+      const { resolve, reject, timeoutId } = pendingRequests.get(requestId);
+      clearTimeout(timeoutId);
+      pendingRequests.delete(requestId);
+
+      if (event.data.error) {
+        reject(new Error(String(event.data.error)));
+        return;
+      }
+      if (event.data.password) {
+        resolve(event.data.password);
+        return;
+      }
+      reject(new Error("応答が不正です。"));
+    }
+
+    async function requestPassword(mac) {
+      try {
+        return await requestPasswordViaBridge(mac);
+      } catch (bridgeError) {
+        console.warn("Bridge request failed", bridgeError);
+        return requestPasswordViaJsonp(mac, bridgeError);
+      }
+    }
+
+    async function requestPasswordViaBridge(mac) {
+      try {
+        await bridgeReadyPromise;
+      } catch (err) {
+        throw err instanceof Error ? err : new Error("GASブリッジの初期化に失敗しました。");
+      }
+
+      if (!bridgeWindow || !bridgeOrigin) {
+        throw new Error("GASブリッジが利用できません。");
+      }
+
+      return new Promise((resolve, reject) => {
+        const requestId = createRequestId();
+        const timeoutId = setTimeout(() => {
+          pendingRequests.delete(requestId);
+          reject(new Error("GASからの応答がタイムアウトしました。"));
+        }, 8000);
+
+        pendingRequests.set(requestId, { resolve, reject, timeoutId });
+        try {
+          bridgeWindow.postMessage({ type: "generate", requestId, mac }, bridgeOrigin);
+        } catch (postError) {
+          clearTimeout(timeoutId);
+          pendingRequests.delete(requestId);
+          reject(new Error("GASブリッジへの送信に失敗しました。"));
+        }
+      });
+    }
+
+    function createRequestId() {
+      if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+        return `req_${crypto.randomUUID()}`;
+      }
+      return `req_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
+    }
+
+    function requestPasswordViaJsonp(mac, bridgeError) {
       return new Promise((resolve, reject) => {
         const callbackName = `__gasJsonpCallback_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
-        let timerId;
-        let script;
+        let timerId = null;
+        let script = null;
 
         const cleanup = () => {
-          if (timerId) {
+          if (timerId !== null) {
             clearTimeout(timerId);
             timerId = null;
           }
@@ -177,7 +305,8 @@
             return;
           }
           if (data.error) {
-            reject(new Error(data.error));
+            const prefix = bridgeError && bridgeError.message ? `${bridgeError.message} / ` : "";
+            reject(new Error(`${prefix}${data.error}`));
             return;
           }
           if (!data.password) {
@@ -197,12 +326,14 @@
         script.async = true;
         script.onerror = () => {
           cleanup();
-          reject(new Error("スクリプトの読み込みに失敗しました。"));
+          const prefix = bridgeError && bridgeError.message ? `${bridgeError.message} / ` : "";
+          reject(new Error(`${prefix}スクリプトの読み込みに失敗しました。`));
         };
 
         timerId = setTimeout(() => {
           cleanup();
-          reject(new Error("応答がタイムアウトしました。"));
+          const prefix = bridgeError && bridgeError.message ? `${bridgeError.message} / ` : "";
+          reject(new Error(`${prefix}応答がタイムアウトしました。`));
         }, 8000);
 
         document.body.appendChild(script);
