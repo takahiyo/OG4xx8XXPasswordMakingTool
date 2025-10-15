@@ -234,11 +234,87 @@
     }
 
     async function requestPassword(mac) {
+            let lastErrorMessage = "";
+      try {
+        return await requestPasswordViaFetch(mac);
+      } catch (fetchError) {
+        const message = normalizeErrorMessage(fetchError);
+        lastErrorMessage = message;
+        console.warn("Fetch request failed", fetchError);
+      }
+
       try {
         return await requestPasswordViaBridge(mac);
       } catch (bridgeError) {
+                const message = normalizeErrorMessage(bridgeError);
+        lastErrorMessage = lastErrorMessage ? `${lastErrorMessage} / ${message}` : message;
         console.warn("Bridge request failed", bridgeError);
-        return requestPasswordViaJsonp(mac, bridgeError);
+      }
+
+      return requestPasswordViaJsonp(mac, lastErrorMessage);
+    }
+
+    function normalizeErrorMessage(error) {
+      if (!error) {
+        return "不明なエラーが発生しました。";
+      }
+      if (typeof error === "string") {
+        return error;
+      }
+      if (error instanceof Error && error.message) {
+        return error.message;
+      }
+      if (typeof error.message === "string" && error.message) {
+        return error.message;
+      }
+      return "不明なエラーが発生しました。";
+    }
+
+    async function requestPasswordViaFetch(mac) {
+      const supportsAbort = typeof AbortController === "function";
+      const controller = supportsAbort ? new AbortController() : null;
+      const timeoutId = supportsAbort ? setTimeout(() => controller.abort(), 8000) : null;
+
+      try {
+        const response = await fetch(GAS_ENDPOINT, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ mac }),
+          signal: controller ? controller.signal : undefined,
+        });
+
+        if (!response.ok) {
+          throw new Error(`GASがエラー(${response.status})を返しました。`);
+        }
+
+        let data = null;
+        try {
+          data = await response.json();
+        } catch (parseError) {
+          throw new Error("GASからの応答を解析できませんでした。");
+        }
+
+        if (!data) {
+          throw new Error("応答が不正です。");
+        }
+        if (data.error) {
+          throw new Error(String(data.error));
+        }
+        if (!data.password) {
+          throw new Error("パスワードが取得できませんでした。");
+        }
+        return data.password;
+      } catch (err) {
+        if (err && err.name === "AbortError") {
+          throw new Error("GASへの接続がタイムアウトしました。");
+        }
+        throw err;
+      } finally {
+        if (timeoutId !== null) {
+          clearTimeout(timeoutId);
+        }
       }
     }
 
@@ -278,7 +354,7 @@
       return `req_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
     }
 
-    function requestPasswordViaJsonp(mac, bridgeError) {
+    function requestPasswordViaJsonp(mac, previousErrorMessage) {
       return new Promise((resolve, reject) => {
         const callbackName = `__gasJsonpCallback_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
         let timerId = null;
@@ -305,7 +381,7 @@
             return;
           }
           if (data.error) {
-            const prefix = bridgeError && bridgeError.message ? `${bridgeError.message} / ` : "";
+            const prefix = previousErrorMessage ? `${previousErrorMessage} / ` : "";
             reject(new Error(`${prefix}${data.error}`));
             return;
           }
@@ -326,13 +402,13 @@
         script.async = true;
         script.onerror = () => {
           cleanup();
-          const prefix = bridgeError && bridgeError.message ? `${bridgeError.message} / ` : "";
+          const prefix = previousErrorMessage ? `${previousErrorMessage} / ` : "";
           reject(new Error(`${prefix}スクリプトの読み込みに失敗しました。`));
         };
 
         timerId = setTimeout(() => {
           cleanup();
-          const prefix = bridgeError && bridgeError.message ? `${bridgeError.message} / ` : "";
+          const prefix = previousErrorMessage ? `${previousErrorMessage} / ` : "";
           reject(new Error(`${prefix}応答がタイムアウトしました。`));
         }, 8000);
 
