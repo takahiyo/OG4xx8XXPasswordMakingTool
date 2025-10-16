@@ -73,6 +73,29 @@
   <button id="copyBtn">コピー</button>
   <script>
     const GAS_ENDPOINT = "https://script.google.com/macros/s/AKfycbxpKIuIrn_x2Rmlr7NDiuCx2sk2NZKruiTwW1dFBCJfr2VeFd6hsUxri0qQh0PVEdJT/exec";
+    const GAS_ENDPOINT_URL = new URL(GAS_ENDPOINT);
+    const BRIDGE_URL = new URL(GAS_ENDPOINT_URL);
+    BRIDGE_URL.searchParams.set("mode", "bridge");
+    const BRIDGE_URL_STRING = BRIDGE_URL.toString();
+    const BRIDGE_ALLOWED_ORIGINS = new Set([
+      GAS_ENDPOINT_URL.origin,
+      BRIDGE_URL.origin,
+      "https://script.googleusercontent.com",
+    ]);
+    if (window.location && typeof window.location.origin === "string" && window.location.origin) {
+      BRIDGE_ALLOWED_ORIGINS.add(window.location.origin);
+    }
+    // file:// やローカル環境で開いた場合は origin が "null" になるため、明示的に許可する
+    BRIDGE_ALLOWED_ORIGINS.add("null");
+    const BRIDGE_STATE = {
+      frame: null,
+      readyPromise: null,
+      readyResolve: null,
+      readyReject: null,
+      readyTimeout: null,
+      pending: new Map(),
+      listenerAttached: false,
+    };
 
     document.getElementById("generateBtn").addEventListener("click", handleGenerate);
     document.getElementById("copyBtn").addEventListener("click", copyToClipboard);
@@ -151,13 +174,25 @@
     }
 
     async function requestPassword(mac) {
+      let combinedError = "";
+
       try {
         return await requestPasswordViaFetch(mac);
       } catch (fetchError) {
         const message = normalizeErrorMessage(fetchError);
+        combinedError = appendError(combinedError, message);
         console.warn("Fetch request failed", fetchError);
-        return requestPasswordViaJsonp(mac, message);
       }
+
+      try {
+        return await requestPasswordViaBridge(mac, combinedError);
+      } catch (bridgeError) {
+        const message = normalizeErrorMessage(bridgeError);
+        combinedError = appendError(combinedError, message);
+        console.warn("Bridge request failed", bridgeError);
+      }
+
+      return requestPasswordViaJsonp(mac, combinedError);
     }
 
     function normalizeErrorMessage(error) {
@@ -174,6 +209,19 @@
         return error.message;
       }
       return "不明なエラーが発生しました。";
+    }
+
+    function appendError(previous, next) {
+      if (!next) {
+        return previous;
+      }
+      if (!previous) {
+        return next;
+      }
+      if (next.indexOf(previous) !== -1) {
+        return next;
+      }
+      return `${previous} / ${next}`;
     }
 
     async function requestPasswordViaFetch(mac) {
@@ -222,6 +270,173 @@
           clearTimeout(timeoutId);
         }
       }
+    }
+
+    function ensureBridgeListener() {
+      if (BRIDGE_STATE.listenerAttached) {
+        return;
+      }
+      window.addEventListener("message", handleBridgeMessage, false);
+      BRIDGE_STATE.listenerAttached = true;
+    }
+
+    function handleBridgeMessage(event) {
+      if (!BRIDGE_STATE.frame || event.source !== BRIDGE_STATE.frame.contentWindow) {
+        return;
+      }
+      if (!BRIDGE_ALLOWED_ORIGINS.has(event.origin)) {
+        return;
+      }
+      const data = event.data || {};
+      if (data.type === "bridge-ready") {
+        completeBridgeReadySuccess();
+        return;
+      }
+      if (data.type !== "bridge-result") {
+        return;
+      }
+
+      const requestId = data.requestId;
+      if (!requestId || !BRIDGE_STATE.pending.has(requestId)) {
+        return;
+      }
+
+      const pending = BRIDGE_STATE.pending.get(requestId);
+      BRIDGE_STATE.pending.delete(requestId);
+
+      const prefix = pending.previousErrorMessage ? `${pending.previousErrorMessage} / ` : "";
+
+      if (data.error) {
+        pending.reject(new Error(`${prefix}${data.error}`));
+        return;
+      }
+      if (data.password) {
+        pending.resolve(data.password);
+        return;
+      }
+      pending.reject(new Error(`${prefix}応答が不正です。`));
+    }
+
+    function completeBridgeReadySuccess() {
+      if (!BRIDGE_STATE.readyPromise) {
+        return;
+      }
+      if (BRIDGE_STATE.readyTimeout !== null) {
+        clearTimeout(BRIDGE_STATE.readyTimeout);
+        BRIDGE_STATE.readyTimeout = null;
+      }
+      const resolve = BRIDGE_STATE.readyResolve;
+      BRIDGE_STATE.readyResolve = null;
+      BRIDGE_STATE.readyReject = null;
+      if (typeof resolve === "function") {
+        resolve();
+      }
+      BRIDGE_STATE.readyPromise = Promise.resolve();
+    }
+
+    function completeBridgeReadyFailure(error) {
+      if (!BRIDGE_STATE.readyPromise) {
+        return;
+      }
+      if (BRIDGE_STATE.readyTimeout !== null) {
+        clearTimeout(BRIDGE_STATE.readyTimeout);
+        BRIDGE_STATE.readyTimeout = null;
+      }
+      const reject = BRIDGE_STATE.readyReject;
+      BRIDGE_STATE.readyResolve = null;
+      BRIDGE_STATE.readyReject = null;
+      if (typeof reject === "function") {
+        reject(error);
+      }
+      if (BRIDGE_STATE.frame && BRIDGE_STATE.frame.parentNode) {
+        BRIDGE_STATE.frame.parentNode.removeChild(BRIDGE_STATE.frame);
+      }
+      BRIDGE_STATE.frame = null;
+      BRIDGE_STATE.readyPromise = null;
+
+      const failure = error instanceof Error ? error : new Error("ブリッジ経由の通信に失敗しました。");
+      BRIDGE_STATE.pending.forEach((pending) => {
+        const prefix = pending.previousErrorMessage ? `${pending.previousErrorMessage} / ` : "";
+        pending.reject(new Error(`${prefix}${normalizeErrorMessage(failure)}`));
+      });
+      BRIDGE_STATE.pending.clear();
+    }
+
+    function ensureBridgeReady() {
+      ensureBridgeListener();
+
+      if (BRIDGE_STATE.readyPromise) {
+        return BRIDGE_STATE.readyPromise;
+      }
+
+      BRIDGE_STATE.readyPromise = new Promise((resolve, reject) => {
+        BRIDGE_STATE.readyResolve = resolve;
+        BRIDGE_STATE.readyReject = reject;
+      });
+
+      BRIDGE_STATE.readyTimeout = setTimeout(() => {
+        completeBridgeReadyFailure(new Error("ブリッジの初期化に失敗しました。"));
+      }, 8000);
+
+      const iframe = document.createElement("iframe");
+      iframe.style.display = "none";
+      iframe.src = BRIDGE_URL_STRING;
+      iframe.onerror = () => {
+        completeBridgeReadyFailure(new Error("ブリッジの読み込みに失敗しました。"));
+      };
+      document.body.appendChild(iframe);
+      BRIDGE_STATE.frame = iframe;
+
+      return BRIDGE_STATE.readyPromise;
+    }
+
+    async function requestPasswordViaBridge(mac, previousErrorMessage) {
+      try {
+        await ensureBridgeReady();
+      } catch (error) {
+        const prefix = previousErrorMessage ? `${previousErrorMessage} / ` : "";
+        throw new Error(`${prefix}${normalizeErrorMessage(error)}`);
+      }
+
+      if (!BRIDGE_STATE.frame || !BRIDGE_STATE.frame.contentWindow) {
+        const prefix = previousErrorMessage ? `${previousErrorMessage} / ` : "";
+        throw new Error(`${prefix}ブリッジが利用できません。`);
+      }
+
+      const requestId = `req_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
+
+      return new Promise((resolve, reject) => {
+        const timerId = setTimeout(() => {
+          BRIDGE_STATE.pending.delete(requestId);
+          const prefix = previousErrorMessage ? `${previousErrorMessage} / ` : "";
+          reject(new Error(`${prefix}ブリッジ経由の応答がタイムアウトしました。`));
+        }, 8000);
+
+        BRIDGE_STATE.pending.set(requestId, {
+          resolve: (password) => {
+            clearTimeout(timerId);
+            resolve(password);
+          },
+          reject: (error) => {
+            clearTimeout(timerId);
+            reject(error);
+          },
+          previousErrorMessage,
+        });
+
+        try {
+          BRIDGE_STATE.frame.contentWindow.postMessage({
+            type: "generate",
+            mac,
+            requestId,
+          }, "*");
+        } catch (postError) {
+          clearTimeout(timerId);
+          BRIDGE_STATE.pending.delete(requestId);
+          const prefix = previousErrorMessage ? `${previousErrorMessage} / ` : "";
+          reject(new Error(`${prefix}${normalizeErrorMessage(postError)}`));
+        }
+      });
     }
 
     function requestPasswordViaJsonp(mac, previousErrorMessage) {
