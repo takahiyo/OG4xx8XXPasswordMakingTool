@@ -156,9 +156,8 @@
       } catch (fetchError) {
         const message = normalizeErrorMessage(fetchError);
         console.warn("Fetch request failed", fetchError);
-                return requestPasswordViaJsonp(mac, message);
+        return requestPasswordViaJsonp(mac, message);
       }
-
     }
 
     function normalizeErrorMessage(error) {
