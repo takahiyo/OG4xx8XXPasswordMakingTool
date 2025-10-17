@@ -6,9 +6,6 @@ function doPost(e) {
 }
 
 function doGet(e) {
-  if (e && e.parameter && e.parameter.mode === 'bridge') {
-    return buildBridgePage();
-  }
   return handleRequest(e);
 }
 
@@ -87,7 +84,7 @@ function extractMac(e) {
             return parsed.mac;
           }
         } catch (err) {
-          // フォーマットエラー時は他の形式を確認
+          // ignore
         }
       }
 
@@ -153,14 +150,4 @@ function buildJsonpResponse(callback, obj) {
     output.setHeader('Cache-Control', 'no-store, max-age=0');
   }
   return output;
-}
-
-function buildBridgePage() {
-  return HtmlService.createHtmlOutputFromFile('bridge')
-    .setTitle('Password Bridge')
-    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
-}
-
-function generatePasswordForBridge(mac) {
-  return generatePassword(mac);
 }
