@@ -1,0 +1,129 @@
+export default {
+  async fetch(request, env) {
+    const allowOrigin = env.ALLOW_ORIGIN || "*";
+
+    if (request.method === "OPTIONS") {
+      return buildCorsResponse(allowOrigin, 204);
+    }
+
+    if (request.method !== "GET" && request.method !== "POST") {
+      return buildErrorResponse(allowOrigin, 405, "GET または POST のみ受け付けています。");
+    }
+
+    if (!env.GAS_ENDPOINT) {
+      return buildErrorResponse(allowOrigin, 500, "GAS_ENDPOINT が設定されていません。");
+    }
+
+    try {
+      const { mac, callback } = await extractParams(request);
+      if (!mac) {
+        return buildErrorResponse(allowOrigin, 400, "MAC アドレスを指定してください。");
+      }
+
+      const gasResponse = await callGas(env.GAS_ENDPOINT, mac);
+      const gasText = await gasResponse.text();
+
+      if (!gasResponse.ok) {
+        return buildErrorResponse(allowOrigin, 502, `GAS 呼び出しに失敗しました (status: ${gasResponse.status})。`);
+      }
+
+      let payload;
+      try {
+        payload = JSON.parse(gasText);
+      } catch (err) {
+        return buildErrorResponse(allowOrigin, 502, "GAS からの応答を解析できませんでした。");
+      }
+
+      if (callback) {
+        const body = `${callback}(${JSON.stringify(payload)});`;
+        return new Response(body, {
+          status: 200,
+          headers: {
+            "Content-Type": "application/javascript; charset=UTF-8",
+            "Cache-Control": "no-store, max-age=0",
+            "Access-Control-Allow-Origin": allowOrigin,
+          },
+        });
+      }
+
+      return buildJsonResponse(allowOrigin, 200, payload);
+    } catch (err) {
+      return buildErrorResponse(allowOrigin, 500, err instanceof Error ? err.message : "内部エラーが発生しました。");
+    }
+  },
+};
+
+async function extractParams(request) {
+  const url = new URL(request.url);
+  const callbackRaw = url.searchParams.get("callback") || "";
+  const callback = callbackRaw.replace(/[^0-9A-Za-z_\.]/g, "").slice(0, 100);
+
+  if (request.method === "GET") {
+    return { mac: url.searchParams.get("mac") || "", callback };
+  }
+
+  if (request.method === "POST") {
+    const contentType = request.headers.get("content-type") || "";
+    if (contentType.includes("application/json")) {
+      const body = await request.json().catch(() => ({}));
+      return { mac: typeof body.mac === "string" ? body.mac : "", callback };
+    }
+
+    if (contentType.includes("application/x-www-form-urlencoded")) {
+      const form = await request.formData();
+      const value = form.get("mac");
+      return { mac: typeof value === "string" ? value : "", callback };
+    }
+
+    if (contentType.includes("text/plain")) {
+      const text = await request.text();
+      return { mac: text.trim(), callback };
+    }
+
+    return { mac: "", callback };
+  }
+
+  throw new Error("サポートされていない HTTP メソッドです。");
+}
+
+async function callGas(endpoint, mac) {
+  const params = new URLSearchParams();
+  params.set("mac", mac);
+
+  return fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+    },
+    body: params,
+  });
+}
+
+function buildCorsResponse(allowOrigin, status) {
+  return new Response(null, {
+    status,
+    headers: {
+      "Access-Control-Allow-Origin": allowOrigin,
+      "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+      "Access-Control-Max-Age": "86400",
+    },
+  });
+}
+
+function buildJsonResponse(allowOrigin, status, payload) {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: {
+      "Content-Type": "application/json; charset=UTF-8",
+      "Access-Control-Allow-Origin": allowOrigin,
+      "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+      "Access-Control-Max-Age": "86400",
+    },
+  });
+}
+
+function buildErrorResponse(allowOrigin, status, message) {
+  return buildJsonResponse(allowOrigin, status, { error: message });
+}
