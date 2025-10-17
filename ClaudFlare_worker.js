@@ -23,41 +23,46 @@ export default {
       );
     }
 
+    let callback = "";
     try {
-      const { mac, callback } = await extractParams(request);
+      const params = await extractParams(request);
+      const mac = params.mac;
+      callback = params.callback || "";
       if (!mac) {
-        return buildErrorResponse(allowOrigin, 400, "MAC アドレスを指定してください。");
+        return buildErrorResponse(allowOrigin, 400, "MAC アドレスを指定してください。", callback);
       }
 
       const gasResponse = await callGas(gasEndpoint, mac);
       const gasText = await gasResponse.text();
 
       if (!gasResponse.ok) {
-        return buildErrorResponse(allowOrigin, 502, `GAS 呼び出しに失敗しました (status: ${gasResponse.status})。`);
+        return buildErrorResponse(
+          allowOrigin,
+          502,
+          `GAS 呼び出しに失敗しました (status: ${gasResponse.status})。`,
+          callback
+        );
       }
 
       let payload;
       try {
         payload = JSON.parse(gasText);
       } catch (err) {
-        return buildErrorResponse(allowOrigin, 502, "GAS からの応答を解析できませんでした。");
+        return buildErrorResponse(allowOrigin, 502, "GAS からの応答を解析できませんでした。", callback);
       }
 
       if (callback) {
-        const body = `${callback}(${JSON.stringify(payload)});`;
-        return new Response(body, {
-          status: 200,
-          headers: {
-            "Content-Type": "application/javascript; charset=UTF-8",
-            "Cache-Control": "no-store, max-age=0",
-            "Access-Control-Allow-Origin": allowOrigin,
-          },
-        });
+        return buildJsonpResponse(allowOrigin, 200, callback, payload);
       }
 
       return buildJsonResponse(allowOrigin, 200, payload);
     } catch (err) {
-      return buildErrorResponse(allowOrigin, 500, err instanceof Error ? err.message : "内部エラーが発生しました。");
+      return buildErrorResponse(
+        allowOrigin,
+        500,
+        err instanceof Error ? err.message : "内部エラーが発生しました。",
+        callback
+      );
     }
   },
 };
@@ -133,6 +138,27 @@ function buildJsonResponse(allowOrigin, status, payload) {
   });
 }
 
-function buildErrorResponse(allowOrigin, status, message) {
-  return buildJsonResponse(allowOrigin, status, { error: message });
+function buildJsonpResponse(allowOrigin, status, callback, payload) {
+  const body = `${callback}(${JSON.stringify(payload)});`;
+  const responseStatus = status >= 400 ? 200 : status;
+
+  return new Response(body, {
+    status: responseStatus,
+    headers: {
+      "Content-Type": "application/javascript; charset=UTF-8",
+      "Cache-Control": "no-store, max-age=0",
+      "Access-Control-Allow-Origin": allowOrigin,
+      "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+      "Access-Control-Max-Age": "86400",
+    },
+  });
+}
+
+function buildErrorResponse(allowOrigin, status, message, callback = "") {
+  const payload = { error: message };
+  if (callback) {
+    return buildJsonpResponse(allowOrigin, status, callback, payload);
+  }
+  return buildJsonResponse(allowOrigin, status, payload);
 }
