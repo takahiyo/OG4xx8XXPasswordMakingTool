@@ -1,6 +1,11 @@
+// GAS の Web アプリ URL を直接記述する場合は、下記の定数を書き換えてください。
+// 例: const DEFAULT_GAS_ENDPOINT = "https://script.google.com/macros/s/XXXXX/exec";
+const DEFAULT_GAS_ENDPOINT = "https://script.google.com/macros/s/AKfycbyfsSGhwnzuehqvBwV1LJ0SzXe6N6O9xz6IF1F2LZmShy9oVlhYRjQZFcoUF3D5Ng/exec";
+
 export default {
   async fetch(request, env) {
     const allowOrigin = env.ALLOW_ORIGIN || "*";
+    const gasEndpoint = (env.GAS_ENDPOINT || DEFAULT_GAS_ENDPOINT).trim();
 
     if (request.method === "OPTIONS") {
       return buildCorsResponse(allowOrigin, 204);
@@ -10,8 +15,12 @@ export default {
       return buildErrorResponse(allowOrigin, 405, "GET または POST のみ受け付けています。");
     }
 
-    if (!env.GAS_ENDPOINT) {
-      return buildErrorResponse(allowOrigin, 500, "GAS_ENDPOINT が設定されていません。");
+    if (!gasEndpoint) {
+      return buildErrorResponse(
+        allowOrigin,
+        500,
+        "GAS_ENDPOINT もしくは DEFAULT_GAS_ENDPOINT を設定してください。"
+      );
     }
 
     try {
@@ -20,7 +29,7 @@ export default {
         return buildErrorResponse(allowOrigin, 400, "MAC アドレスを指定してください。");
       }
 
-      const gasResponse = await callGas(env.GAS_ENDPOINT, mac);
+      const gasResponse = await callGas(gasEndpoint, mac);
       const gasText = await gasResponse.text();
 
       if (!gasResponse.ok) {
