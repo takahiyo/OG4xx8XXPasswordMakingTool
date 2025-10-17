@@ -14,7 +14,7 @@
       background: #f8f9fa;
     }
     h2 {
-      font-size: 1.2em;
+      fontサイズ: 1.2em;
       margin-bottom: 1.5em;
       text-align: center;
     }
@@ -117,32 +117,7 @@
   <div id="diagnostics" aria-live="polite"></div>
   <script>
     const GAS_ENDPOINT = "https://script.google.com/macros/s/AKfycbyQIME9s-FjAmFWtdOKsEKpb4VxLxnXE-fSKNl8RC-ybbdtUK7_94MeCtT50K3G5TE_/exec";
-    const GAS_ENDPOINT_URL = new URL(GAS_ENDPOINT);
-    const BRIDGE_URL = new URL(GAS_ENDPOINT_URL);
-    BRIDGE_URL.searchParams.set("mode", "bridge");
-    const BRIDGE_URL_STRING = BRIDGE_URL.toString();
-    const BRIDGE_ALLOWED_ORIGINS = new Set([
-      GAS_ENDPOINT_URL.origin,
-      BRIDGE_URL.origin,
-      "https://script.googleusercontent.com",
-    ]);
-    if (window.location && typeof window.location.origin === "string" && window.location.origin) {
-      BRIDGE_ALLOWED_ORIGINS.add(window.location.origin);
-    }
-    // file:// やローカル環境で開いた場合は origin が "null" になるため、明示的に許可する
-    BRIDGE_ALLOWED_ORIGINS.add("null");
-    const BRIDGE_STATE = {
-      frame: null,
-      childWindow: null,
-      initPingTimer: null,
-      readyPromise: null,
-      readyResolve: null,
-      readyReject: null,
-      readyTimeout: null,
-      pending: new Map(),
-      listenerAttached: false,
-      lastFailureReason: null,
-    };
+    // 通信経路は Fetch を本線とし、失敗時は JSONP を利用します。
 
     document.getElementById("generateBtn").addEventListener("click", handleGenerate);
     document.getElementById("copyBtn").addEventListener("click", copyToClipboard);
@@ -238,8 +213,7 @@
 
       const steps = [
         { label: "1) Fetch経由の通信", fn: diagnosticFetch },
-        { label: "2) ブリッジiframeの初期化", fn: diagnosticBridge },
-        { label: "3) JSONPフォールバック", fn: diagnosticJsonp },
+        { label: "2) JSONPフォールバック", fn: diagnosticJsonp },
       ];
 
       for (const step of steps) {
@@ -286,27 +260,6 @@
       }
     }
 
-    async function diagnosticBridge() {
-      const testMac = "001122334455";
-      const start = typeof performance !== "undefined" ? performance.now() : Date.now();
-      try {
-        const password = await requestPasswordViaBridge(testMac, "");
-        const duration = Math.round((typeof performance !== "undefined" ? performance.now() : Date.now()) - start);
-        const frameSrc = BRIDGE_STATE.frame ? BRIDGE_STATE.frame.src : "不明";
-        return `成功（応答 ${maskPassword(password)} ／ 約${duration}ms ／ 読み込み元 ${frameSrc}）`;
-      } catch (error) {
-        const base = normalizeErrorMessage(error);
-        const reason = BRIDGE_STATE.lastFailureReason;
-        let hint = "";
-        if (reason === "timeout") {
-          hint = "（bridge.htmlが8秒以内に応答していません。GAS側のウェブアプリを再デプロイし、匿名アクセスが許可されているか確認してください。）";
-        } else if (reason === "load-error") {
-          hint = "（bridge.htmlの読み込みがブロックされています。ウェブアプリURLや公開範囲、企業プロキシのブロック設定を確認してください。）";
-        }
-        throw new Error(`ブリッジ経由エラー：${base}${hint}`);
-      }
-    }
-
     async function diagnosticJsonp() {
       const testMac = "001122334455";
       const start = typeof performance !== "undefined" ? performance.now() : Date.now();
@@ -340,14 +293,6 @@
         console.warn("Fetch request failed", fetchError);
       }
 
-      try {
-        return await requestPasswordViaBridge(mac, combinedError);
-      } catch (bridgeError) {
-        const message = normalizeErrorMessage(bridgeError);
-        combinedError = appendError(combinedError, message);
-        console.warn("Bridge request failed", bridgeError);
-      }
-
       return requestPasswordViaJsonp(mac, combinedError);
     }
 
@@ -378,32 +323,6 @@
         return next;
       }
       return `${previous} / ${next}`;
-    }
-
-    function startBridgeInitPings() {
-      stopBridgeInitPings();
-
-      const sendPing = () => {
-        const targetWindow = BRIDGE_STATE.childWindow || (BRIDGE_STATE.frame && BRIDGE_STATE.frame.contentWindow);
-        if (!targetWindow) {
-          return;
-        }
-        try {
-          targetWindow.postMessage({ type: "bridge-init" }, "*");
-        } catch (err) {
-          console.warn("Bridge init ping failed", err);
-        }
-      };
-
-      sendPing();
-      BRIDGE_STATE.initPingTimer = setInterval(sendPing, 500);
-    }
-
-    function stopBridgeInitPings() {
-      if (BRIDGE_STATE.initPingTimer !== null) {
-        clearInterval(BRIDGE_STATE.initPingTimer);
-        BRIDGE_STATE.initPingTimer = null;
-      }
     }
 
     async function requestPasswordViaFetch(mac) {
@@ -452,205 +371,6 @@
           clearTimeout(timeoutId);
         }
       }
-    }
-
-    function ensureBridgeListener() {
-      if (BRIDGE_STATE.listenerAttached) {
-        return;
-      }
-      window.addEventListener("message", handleBridgeMessage, false);
-      BRIDGE_STATE.listenerAttached = true;
-    }
-
-    function handleBridgeMessage(event) {
-      if (!BRIDGE_STATE.frame) {
-        return;
-      }
-      if (!BRIDGE_ALLOWED_ORIGINS.has(event.origin)) {
-        return;
-      }
-      const data = event.data || {};
-      const type = typeof data === "string" ? data : data.type;
-      if (type === "bridge-ready") {
-        BRIDGE_STATE.childWindow = event.source || null;
-        completeBridgeReadySuccess();
-        return;
-      }
-      if (type !== "bridge-result") {
-        return;
-      }
-
-      if (!BRIDGE_STATE.childWindow && event.source) {
-        BRIDGE_STATE.childWindow = event.source;
-      }
-
-      const requestId = typeof data.requestId === "string" ? data.requestId : undefined;
-      if (!requestId || !BRIDGE_STATE.pending.has(requestId)) {
-        return;
-      }
-
-      const pending = BRIDGE_STATE.pending.get(requestId);
-      BRIDGE_STATE.pending.delete(requestId);
-
-      const prefix = pending.previousErrorMessage ? `${pending.previousErrorMessage} / ` : "";
-
-      if (data.error) {
-        pending.reject(new Error(`${prefix}${data.error}`));
-        return;
-      }
-      if (data.password) {
-        pending.resolve(data.password);
-        return;
-      }
-      pending.reject(new Error(`${prefix}応答が不正です。`));
-    }
-
-    function completeBridgeReadySuccess() {
-      if (!BRIDGE_STATE.readyPromise) {
-        return;
-      }
-      if (BRIDGE_STATE.readyTimeout !== null) {
-        clearTimeout(BRIDGE_STATE.readyTimeout);
-        BRIDGE_STATE.readyTimeout = null;
-      }
-      stopBridgeInitPings();
-      const resolve = BRIDGE_STATE.readyResolve;
-      BRIDGE_STATE.readyResolve = null;
-      BRIDGE_STATE.readyReject = null;
-      if (typeof resolve === "function") {
-        resolve();
-      }
-      BRIDGE_STATE.readyPromise = Promise.resolve();
-      BRIDGE_STATE.lastFailureReason = null;
-    }
-
-    function completeBridgeReadyFailure(error, reason) {
-      if (!BRIDGE_STATE.readyPromise) {
-        return;
-      }
-      if (BRIDGE_STATE.readyTimeout !== null) {
-        clearTimeout(BRIDGE_STATE.readyTimeout);
-        BRIDGE_STATE.readyTimeout = null;
-      }
-      stopBridgeInitPings();
-      const reject = BRIDGE_STATE.readyReject;
-      BRIDGE_STATE.readyResolve = null;
-      BRIDGE_STATE.readyReject = null;
-      if (typeof reject === "function") {
-        reject(error);
-      }
-      if (BRIDGE_STATE.frame && BRIDGE_STATE.frame.parentNode) {
-        BRIDGE_STATE.frame.parentNode.removeChild(BRIDGE_STATE.frame);
-      }
-      BRIDGE_STATE.frame = null;
-      BRIDGE_STATE.childWindow = null;
-      BRIDGE_STATE.readyPromise = null;
-      BRIDGE_STATE.lastFailureReason = reason || "unknown";
-
-      const failure = error instanceof Error ? error : new Error("ブリッジ経由の通信に失敗しました。");
-      BRIDGE_STATE.pending.forEach((pending) => {
-        const prefix = pending.previousErrorMessage ? `${pending.previousErrorMessage} / ` : "";
-        pending.reject(new Error(`${prefix}${normalizeErrorMessage(failure)}`));
-      });
-      BRIDGE_STATE.pending.clear();
-    }
-
-    function ensureBridgeReady() {
-      ensureBridgeListener();
-
-      if (BRIDGE_STATE.readyPromise) {
-        return BRIDGE_STATE.readyPromise;
-      }
-
-      if (BRIDGE_STATE.frame && BRIDGE_STATE.frame.parentNode) {
-        BRIDGE_STATE.frame.parentNode.removeChild(BRIDGE_STATE.frame);
-      }
-      BRIDGE_STATE.frame = null;
-      BRIDGE_STATE.childWindow = null;
-      stopBridgeInitPings();
-
-      BRIDGE_STATE.readyPromise = new Promise((resolve, reject) => {
-        BRIDGE_STATE.readyResolve = resolve;
-        BRIDGE_STATE.readyReject = reject;
-      });
-
-      BRIDGE_STATE.readyTimeout = setTimeout(() => {
-        completeBridgeReadyFailure(new Error("ブリッジの初期化に失敗しました。"), "timeout");
-      }, 8000);
-
-      const iframe = document.createElement("iframe");
-      iframe.style.display = "none";
-      iframe.src = BRIDGE_URL_STRING;
-      iframe.onload = () => {
-        BRIDGE_STATE.childWindow = iframe.contentWindow;
-      };
-      iframe.onerror = () => {
-        completeBridgeReadyFailure(new Error("ブリッジの読み込みに失敗しました。"), "load-error");
-      };
-      document.body.appendChild(iframe);
-      BRIDGE_STATE.frame = iframe;
-      BRIDGE_STATE.childWindow = iframe.contentWindow;
-      BRIDGE_STATE.lastFailureReason = null;
-      startBridgeInitPings();
-
-      return BRIDGE_STATE.readyPromise;
-    }
-
-    async function requestPasswordViaBridge(mac, previousErrorMessage) {
-      try {
-        await ensureBridgeReady();
-      } catch (error) {
-        const prefix = previousErrorMessage ? `${previousErrorMessage} / ` : "";
-        throw new Error(`${prefix}${normalizeErrorMessage(error)}`);
-      }
-
-      if (!BRIDGE_STATE.frame) {
-        const prefix = previousErrorMessage ? `${previousErrorMessage} / ` : "";
-        throw new Error(`${prefix}ブリッジが利用できません。`);
-      }
-
-      const requestId = `req_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
-
-      return new Promise((resolve, reject) => {
-        const timerId = setTimeout(() => {
-          BRIDGE_STATE.pending.delete(requestId);
-          const prefix = previousErrorMessage ? `${previousErrorMessage} / ` : "";
-          reject(new Error(`${prefix}ブリッジ経由の応答がタイムアウトしました。`));
-        }, 8000);
-
-        BRIDGE_STATE.pending.set(requestId, {
-          resolve: (password) => {
-            clearTimeout(timerId);
-            resolve(password);
-          },
-          reject: (error) => {
-            clearTimeout(timerId);
-            reject(error);
-          },
-          previousErrorMessage,
-        });
-
-        const targetWindow = BRIDGE_STATE.childWindow || (BRIDGE_STATE.frame && BRIDGE_STATE.frame.contentWindow);
-        if (!targetWindow) {
-          BRIDGE_STATE.pending.delete(requestId);
-          const prefix = previousErrorMessage ? `${previousErrorMessage} / ` : "";
-          reject(new Error(`${prefix}ブリッジが利用できません。`));
-          return;
-        }
-
-        try {
-          targetWindow.postMessage({
-            type: "generate",
-            mac,
-            requestId,
-          }, "*");
-        } catch (postError) {
-          clearTimeout(timerId);
-          BRIDGE_STATE.pending.delete(requestId);
-          const prefix = previousErrorMessage ? `${previousErrorMessage} / ` : "";
-          reject(new Error(`${prefix}${normalizeErrorMessage(postError)}`));
-        }
-      });
     }
 
     function requestPasswordViaJsonp(mac, previousErrorMessage) {
@@ -722,17 +442,12 @@
 
       const messages = [];
       const fetchResult = results[0];
-      const bridgeResult = results[1];
-      const jsonpResult = results[2];
+      const jsonpResult = results[1];
 
       if (fetchResult && fetchResult.ok) {
         messages.push("Fetch経由の通信は成功しています。このまま通常利用できますが、他の診断結果も参考にしてください。");
       } else {
         messages.push("Fetch経路が失敗しています。GASのURL、最新デプロイ、ネットワーク遮断の有無を確認してください。");
-      }
-
-      if (bridgeResult && !bridgeResult.ok) {
-        messages.push("ブリッジiframeが失敗しています。bridge.htmlを含めて再デプロイし、アクセス権限が「全員」になっているかを確認してください。");
       }
 
       if (jsonpResult && !jsonpResult.ok) {
