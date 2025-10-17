@@ -4,9 +4,16 @@
     <base target="_top">
     <meta charset="UTF-8">
     <script>
-      function notifyReady() {
-        if (window.parent) {
-          window.parent.postMessage({ type: 'bridge-ready' }, '*');
+      function notifyReady(targetWindow, targetOrigin) {
+        const destination = targetWindow || window.parent;
+        if (!destination) {
+          return;
+        }
+        const origin = typeof targetOrigin === 'string' && targetOrigin ? targetOrigin : '*';
+        try {
+          destination.postMessage({ type: 'bridge-ready' }, origin);
+        } catch (err) {
+          // ignore
         }
       }
 
@@ -16,7 +23,17 @@
       }
 
       window.addEventListener('message', function(event) {
-        if (!event || !event.data || event.data.type !== 'generate') {
+        if (!event || !event.data) {
+          return;
+        }
+
+        const data = event.data;
+        if (data === 'bridge-init' || data.type === 'bridge-init') {
+          notifyReady(event.source, event.origin);
+          return;
+        }
+
+        if (data.type !== 'generate') {
           return;
         }
         const requestId = event.data.requestId;
@@ -43,7 +60,9 @@
           .generatePasswordForBridge(mac);
       });
 
-      window.addEventListener('load', notifyReady);
+      window.addEventListener('load', function() {
+        notifyReady();
+      });
     </script>
   </head>
   <body></body>
