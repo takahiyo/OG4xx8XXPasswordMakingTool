@@ -54,6 +54,48 @@
     #password {
       background: #e9ecef;
     }
+    #diagnosticsBtn {
+      background: #6c757d;
+    }
+    #diagnosticsBtn:active {
+      background: #495057;
+    }
+    #diagnostics {
+      margin-top: 1.5em;
+      font-size: 0.95em;
+      color: #212529;
+      background: #fff;
+      border: 1px solid #ced4da;
+      border-radius: 4px;
+      padding: 0.9em 1em;
+      display: none;
+    }
+    #diagnostics h3 {
+      margin: 0 0 0.6em;
+      font-size: 1em;
+    }
+    #diagnostics ul {
+      margin: 0;
+      padding-left: 1.1em;
+    }
+    #diagnostics li {
+      margin-bottom: 0.45em;
+    }
+    #diagnostics li span.result {
+      display: block;
+      margin-top: 0.2em;
+    }
+    #diagnostics li span.result.ok {
+      color: #137333;
+    }
+    #diagnostics li span.result.ng {
+      color: #c41c1c;
+    }
+    #diagnostics .note {
+      margin-top: 0.8em;
+      font-size: 0.9em;
+      color: #495057;
+    }
     @media (max-width: 480px) {
       body {
         max-width: 98vw;
@@ -71,6 +113,8 @@
   <label for="password">パスワード：</label>
   <input type="text" id="password" size="20" readonly>
   <button id="copyBtn">コピー</button>
+  <button id="diagnosticsBtn">接続チェック</button>
+  <div id="diagnostics" aria-live="polite"></div>
   <script>
     const GAS_ENDPOINT = "https://script.google.com/macros/s/AKfycbxpKIuIrn_x2Rmlr7NDiuCx2sk2NZKruiTwW1dFBCJfr2VeFd6hsUxri0qQh0PVEdJT/exec";
     const GAS_ENDPOINT_URL = new URL(GAS_ENDPOINT);
@@ -99,6 +143,7 @@
 
     document.getElementById("generateBtn").addEventListener("click", handleGenerate);
     document.getElementById("copyBtn").addEventListener("click", copyToClipboard);
+    document.getElementById("diagnosticsBtn").addEventListener("click", runDiagnostics);
 
     async function handleGenerate() {
       const macInput = document.getElementById("macInput");
@@ -122,7 +167,8 @@
         const password = await requestPassword(normalized);
         passwordEl.value = password;
       } catch (err) {
-        errorEl.textContent = err && err.message ? err.message : "サーバー通信に失敗しました。";
+        const baseMessage = err && err.message ? err.message : "サーバー通信に失敗しました。";
+        errorEl.textContent = `${baseMessage}（「接続チェック」で詳細を確認できます）`;
         macInput.focus();
       }
     }
@@ -171,6 +217,100 @@
       }).catch(() => {
         alert("クリップボードへのコピーに失敗しました");
       });
+    }
+
+    async function runDiagnostics() {
+      const container = document.getElementById("diagnostics");
+      container.style.display = "block";
+      container.textContent = "";
+
+      const heading = document.createElement("h3");
+      heading.textContent = "接続チェック結果";
+      container.appendChild(heading);
+
+      const list = document.createElement("ul");
+      container.appendChild(list);
+
+      const steps = [
+        { label: "1) Fetch経由の通信", fn: diagnosticFetch },
+        { label: "2) ブリッジiframeの初期化", fn: diagnosticBridge },
+        { label: "3) JSONPフォールバック", fn: diagnosticJsonp },
+      ];
+
+      for (const step of steps) {
+        const item = document.createElement("li");
+        const label = document.createElement("span");
+        label.textContent = step.label;
+        item.appendChild(label);
+
+        const result = document.createElement("span");
+        result.className = "result";
+        result.textContent = "診断中...";
+        item.appendChild(result);
+
+        list.appendChild(item);
+
+        try {
+          const detail = await step.fn();
+          result.classList.add("ok");
+          result.textContent = detail;
+        } catch (error) {
+          result.classList.add("ng");
+          result.textContent = normalizeErrorMessage(error);
+        }
+      }
+
+      const note = document.createElement("div");
+      note.className = "note";
+      note.innerHTML = "失敗した項目の内容を確認し、<br>・ネットワーク遮断やGASの公開設定<br>・GAS URLへのアクセス権限<br>・ブラウザ拡張や企業プロキシによるブロック<br>などを順に見直してください。";
+      container.appendChild(note);
+    }
+
+    async function diagnosticFetch() {
+      const testMac = "001122334455";
+      const start = typeof performance !== "undefined" ? performance.now() : Date.now();
+      try {
+        const password = await requestPasswordViaFetch(testMac);
+        const duration = Math.round((typeof performance !== "undefined" ? performance.now() : Date.now()) - start);
+        return `成功（応答 ${maskPassword(password)} ／ 約${duration}ms）`;
+      } catch (error) {
+        throw new Error(`Fetch通信エラー：${normalizeErrorMessage(error)}`);
+      }
+    }
+
+    async function diagnosticBridge() {
+      const testMac = "001122334455";
+      const start = typeof performance !== "undefined" ? performance.now() : Date.now();
+      try {
+        const password = await requestPasswordViaBridge(testMac, "");
+        const duration = Math.round((typeof performance !== "undefined" ? performance.now() : Date.now()) - start);
+        const frameSrc = BRIDGE_STATE.frame ? BRIDGE_STATE.frame.src : "不明";
+        return `成功（応答 ${maskPassword(password)} ／ 約${duration}ms ／ 読み込み元 ${frameSrc}）`;
+      } catch (error) {
+        throw new Error(`ブリッジ経由エラー：${normalizeErrorMessage(error)}`);
+      }
+    }
+
+    async function diagnosticJsonp() {
+      const testMac = "001122334455";
+      const start = typeof performance !== "undefined" ? performance.now() : Date.now();
+      try {
+        const password = await requestPasswordViaJsonp(testMac, "");
+        const duration = Math.round((typeof performance !== "undefined" ? performance.now() : Date.now()) - start);
+        return `成功（応答 ${maskPassword(password)} ／ 約${duration}ms）`;
+      } catch (error) {
+        throw new Error(`JSONP経由エラー：${normalizeErrorMessage(error)}`);
+      }
+    }
+
+    function maskPassword(password) {
+      if (!password) {
+        return "空";
+      }
+      if (password.length <= 4) {
+        return "*".repeat(password.length);
+      }
+      return `${password.slice(0, 2)}***${password.slice(-2)}`;
     }
 
     async function requestPassword(mac) {
@@ -230,12 +370,12 @@
       const timeoutId = supportsAbort ? setTimeout(() => controller.abort(), 8000) : null;
 
       try {
+        const params = new URLSearchParams();
+        params.set("mac", mac);
+
         const response = await fetch(GAS_ENDPOINT, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ mac }),
+          body: params,
           signal: controller ? controller.signal : undefined,
         });
 
