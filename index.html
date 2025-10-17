@@ -1,164 +1,465 @@
-// GAS の Web アプリ URL を直接記述する場合は、下記の定数を書き換えてください。
-// 例: const DEFAULT_GAS_ENDPOINT = "https://script.google.com/macros/s/AKfycbyfsSGhwnzuehqvBwV1LJ0SzXe6N6O9xz6IF1F2LZmShy9oVlhYRjQZFcoUF3D5Ng/exec";
-const DEFAULT_GAS_ENDPOINT = "";
-
-export default {
-  async fetch(request, env) {
-    const allowOrigin = env.ALLOW_ORIGIN || "*";
-    const gasEndpoint = (env.GAS_ENDPOINT || DEFAULT_GAS_ENDPOINT).trim();
-
-    if (request.method === "OPTIONS") {
-      return buildCorsResponse(allowOrigin, 204);
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>パスワード生成ツール</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body {
+      max-width: 400px;
+      margin: 2em auto;
+      font-size: 1.1em;
+      font-family: sans-serif;
+      padding: 0 1em;
+      background: #f8f9fa;
     }
-
-    if (request.method !== "GET" && request.method !== "POST") {
-      return buildErrorResponse(allowOrigin, 405, "GET または POST のみ受け付けています。");
+    h2 {
+      font-size: 1.2em;
+      margin-bottom: 1.5em;
+      text-align: center;
     }
-
-    if (!gasEndpoint) {
-      return buildErrorResponse(
-        allowOrigin,
-        500,
-        "GAS_ENDPOINT もしくは DEFAULT_GAS_ENDPOINT を設定してください。"
-      );
+    label, input, button {
+      display: block;
+      width: 100%;
+      margin-bottom: 0.8em;
     }
+    input[type="text"] {
+      padding: 0.5em;
+      font-size: 1.1em;
+      box-sizing: border-box;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      background: #fff;
+    }
+    button {
+      padding: 0.7em 0;
+      font-size: 1.1em;
+      border: none;
+      border-radius: 4px;
+      background: #007bff;
+      color: #fff;
+      margin-bottom: 1em;
+      cursor: pointer;
+    }
+    button:active {
+      background: #0056b3;
+    }
+    #error {
+      color: #e74c3c;
+      font-weight: bold;
+      margin-bottom: 1em;
+      text-align: center;
+      min-height: 1.5em;
+    }
+    #password {
+      background: #e9ecef;
+    }
+    #diagnosticsBtn {
+      background: #6c757d;
+    }
+    #diagnosticsBtn:active {
+      background: #495057;
+    }
+    #diagnostics {
+      margin-top: 1.5em;
+      font-size: 0.95em;
+      color: #212529;
+      background: #fff;
+      border: 1px solid #ced4da;
+      border-radius: 4px;
+      padding: 0.9em 1em;
+      display: none;
+    }
+    #diagnostics h3 {
+      margin: 0 0 0.6em;
+      font-size: 1em;
+    }
+    #diagnostics ul {
+      margin: 0;
+      padding-left: 1.1em;
+    }
+    #diagnostics li {
+      margin-bottom: 0.45em;
+    }
+    #diagnostics li span.result {
+      display: block;
+      margin-top: 0.2em;
+    }
+    #diagnostics li span.result.ok {
+      color: #137333;
+    }
+    #diagnostics li span.result.ng {
+      color: #c41c1c;
+    }
+    #diagnostics .note {
+      margin-top: 0.8em;
+      font-size: 0.9em;
+      color: #495057;
+    }
+    @media (max-width: 480px) {
+      body {
+        max-width: 98vw;
+        font-size: 1em;
+      }
+    }
+  </style>
+</head>
+<body>
+  <h2>OG4xx/OG8xx パスワード生成ツール</h2>
+  <label for="macInput">MACアドレス：</label>
+  <input type="text" id="macInput" size="20" autocomplete="off" placeholder="例）00:11:22:33:44:55">
+  <button id="generateBtn">生成</button>
+  <p id="error"></p>
+  <label for="password">パスワード：</label>
+  <input type="text" id="password" size="20" readonly>
+  <button id="copyBtn">コピー</button>
+  <button id="diagnosticsBtn">接続チェック</button>
+  <div id="diagnostics" aria-live="polite"></div>
+  <script>
+    // Cloudflare Workers を経由したエンドポイントに置き換えてください。
+    // ルートパスで公開している場合はサブパス不要です。必要に応じて /api/password などのパスを追加してください。
+    const GAS_ENDPOINT = "https://og4xx8xxpasswordmakingtool.taka-hiyo.workers.dev/";
+    // 通信経路は Fetch を本線とし、失敗時は JSONP を利用します。
 
-    let callback = "";
-    try {
-      const params = await extractParams(request);
-      const mac = params.mac;
-      callback = params.callback || "";
-      if (!mac) {
-        return buildErrorResponse(allowOrigin, 400, "MAC アドレスを指定してください。", callback);
+    document.getElementById("generateBtn").addEventListener("click", handleGenerate);
+    document.getElementById("copyBtn").addEventListener("click", copyToClipboard);
+    document.getElementById("diagnosticsBtn").addEventListener("click", runDiagnostics);
+
+    async function handleGenerate() {
+      const macInput = document.getElementById("macInput");
+      const errorEl = document.getElementById("error");
+      const passwordEl = document.getElementById("password");
+
+      const macRaw = macInput.value.trim();
+      const normalized = normalizeMac(macRaw);
+      const validationError = validateMac(normalized);
+
+      errorEl.textContent = "";
+      passwordEl.value = "";
+
+      if (validationError) {
+        errorEl.textContent = validationError;
+        macInput.focus();
+        return;
       }
 
-      const gasResponse = await callGas(gasEndpoint, mac);
-      const gasText = await gasResponse.text();
-
-      if (!gasResponse.ok) {
-        return buildErrorResponse(
-          allowOrigin,
-          502,
-          `GAS 呼び出しに失敗しました (status: ${gasResponse.status})。`,
-          callback
-        );
-      }
-
-      let payload;
       try {
-        payload = JSON.parse(gasText);
+        const password = await requestPassword(normalized);
+        passwordEl.value = password;
       } catch (err) {
-        return buildErrorResponse(allowOrigin, 502, "GAS からの応答を解析できませんでした。", callback);
+        const baseMessage = err && err.message ? err.message : "サーバー通信に失敗しました。";
+        errorEl.textContent = `${baseMessage}（「接続チェック」で詳細を確認できます）`;
+        macInput.focus();
+      }
+    }
+
+    function validateMac(normalized) {
+      if (!normalized) {
+        return "MACアドレスを入力してください。";
+      }
+      if (normalized.length !== 12) {
+        return "MACアドレス長が不正です。";
+      }
+      if (!/^[0-9A-F]{12}$/.test(normalized)) {
+        return "MACアドレスが16進数ではありません。";
+      }
+      return "";
+    }
+
+    function normalizeMac(value) {
+      if (value == null) {
+        return "";
+      }
+      if (typeof value !== "string") {
+        value = String(value);
+      }
+      return value.replace(/[-:\.\s]/g, "").toUpperCase();
+    }
+
+    function copyToClipboard() {
+      const pwd = document.getElementById("password");
+      if (!pwd.value) {
+        alert("パスワードがありません");
+        return;
+      }
+      if (!navigator.clipboard || typeof navigator.clipboard.writeText !== "function") {
+        const textarea = document.createElement("textarea");
+        textarea.value = pwd.value;
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textarea);
+        alert("クリップボードにコピーしました");
+        return;
+      }
+      navigator.clipboard.writeText(pwd.value).then(() => {
+        alert("クリップボードにコピーしました");
+      }).catch(() => {
+        alert("クリップボードへのコピーに失敗しました");
+      });
+    }
+
+    async function runDiagnostics() {
+      const container = document.getElementById("diagnostics");
+      container.style.display = "block";
+      container.textContent = "";
+
+      const heading = document.createElement("h3");
+      heading.textContent = "接続チェック結果";
+      container.appendChild(heading);
+
+      const list = document.createElement("ul");
+      container.appendChild(list);
+
+      const results = [];
+
+      const steps = [
+        { label: "1) Fetch経由の通信", fn: diagnosticFetch },
+        { label: "2) JSONPフォールバック", fn: diagnosticJsonp },
+      ];
+
+      for (const step of steps) {
+        const item = document.createElement("li");
+        const label = document.createElement("span");
+        label.textContent = step.label;
+        item.appendChild(label);
+
+        const result = document.createElement("span");
+        result.className = "result";
+        result.textContent = "診断中...";
+        item.appendChild(result);
+
+        list.appendChild(item);
+
+        try {
+          const detail = await step.fn();
+          result.classList.add("ok");
+          result.textContent = detail;
+          results.push({ ok: true, detail, label: step.label });
+        } catch (error) {
+          result.classList.add("ng");
+          const message = normalizeErrorMessage(error);
+          result.textContent = message;
+          results.push({ ok: false, detail: message, label: step.label });
+        }
       }
 
-      if (callback) {
-        return buildJsonpResponse(allowOrigin, 200, callback, payload);
+      const note = document.createElement("div");
+      note.className = "note";
+      note.innerHTML = buildDiagnosticsAdvice(results);
+      container.appendChild(note);
+    }
+
+    async function diagnosticFetch() {
+      const testMac = "001122334455";
+      const start = typeof performance !== "undefined" ? performance.now() : Date.now();
+      try {
+        const password = await requestPasswordViaFetch(testMac);
+        const duration = Math.round((typeof performance !== "undefined" ? performance.now() : Date.now()) - start);
+        return `成功（応答 ${maskPassword(password)} ／ 約${duration}ms）`;
+      } catch (error) {
+        throw new Error(`Fetch通信エラー：${normalizeErrorMessage(error)}`);
+      }
+    }
+
+    async function diagnosticJsonp() {
+      const testMac = "001122334455";
+      const start = typeof performance !== "undefined" ? performance.now() : Date.now();
+      try {
+        const password = await requestPasswordViaJsonp(testMac, "");
+        const duration = Math.round((typeof performance !== "undefined" ? performance.now() : Date.now()) - start);
+        return `成功（応答 ${maskPassword(password)} ／ 約${duration}ms）`;
+      } catch (error) {
+        throw new Error(`JSONP経由エラー：${normalizeErrorMessage(error)}`);
+      }
+    }
+
+    function maskPassword(password) {
+      if (!password) {
+        return "空";
+      }
+      if (password.length <= 4) {
+        return "*".repeat(password.length);
+      }
+      return `${password.slice(0, 2)}***${password.slice(-2)}`;
+    }
+
+    async function requestPassword(mac) {
+      let combinedError = "";
+
+      try {
+        return await requestPasswordViaFetch(mac);
+      } catch (fetchError) {
+        const message = normalizeErrorMessage(fetchError);
+        combinedError = appendError(combinedError, message);
+        console.warn("Fetch request failed", fetchError);
       }
 
-      return buildJsonResponse(allowOrigin, 200, payload);
-    } catch (err) {
-      return buildErrorResponse(
-        allowOrigin,
-        500,
-        err instanceof Error ? err.message : "内部エラーが発生しました。",
-        callback
-      );
-    }
-  },
-};
-
-async function extractParams(request) {
-  const url = new URL(request.url);
-  const callbackRaw = url.searchParams.get("callback") || "";
-  const callback = callbackRaw.replace(/[^0-9A-Za-z_\.]/g, "").slice(0, 100);
-
-  if (request.method === "GET") {
-    return { mac: url.searchParams.get("mac") || "", callback };
-  }
-
-  if (request.method === "POST") {
-    const contentType = request.headers.get("content-type") || "";
-    if (contentType.includes("application/json")) {
-      const body = await request.json().catch(() => ({}));
-      return { mac: typeof body.mac === "string" ? body.mac : "", callback };
+      return requestPasswordViaJsonp(mac, combinedError);
     }
 
-    if (contentType.includes("application/x-www-form-urlencoded")) {
-      const form = await request.formData();
-      const value = form.get("mac");
-      return { mac: typeof value === "string" ? value : "", callback };
+    function normalizeErrorMessage(error) {
+      if (!error) {
+        return "不明なエラーが発生しました。";
+      }
+      if (typeof error === "string") {
+        return error;
+      }
+      if (error instanceof Error && error.message) {
+        return error.message;
+      }
+      if (typeof error.message === "string" && error.message) {
+        return error.message;
+      }
+      return "不明なエラーが発生しました。";
     }
 
-    if (contentType.includes("text/plain")) {
-      const text = await request.text();
-      return { mac: text.trim(), callback };
+    function appendError(previous, next) {
+      if (!next) {
+        return previous;
+      }
+      if (!previous) {
+        return next;
+      }
+      if (next.indexOf(previous) !== -1) {
+        return next;
+      }
+      return `${previous} / ${next}`;
     }
 
-    return { mac: "", callback };
-  }
+    async function requestPasswordViaFetch(mac) {
+      const supportsAbort = typeof AbortController === "function";
+      const controller = supportsAbort ? new AbortController() : null;
+      const timeoutId = supportsAbort ? setTimeout(() => controller.abort(), 8000) : null;
 
-  throw new Error("サポートされていない HTTP メソッドです。");
-}
+      try {
+        const params = new URLSearchParams();
+        params.set("mac", mac);
 
-async function callGas(endpoint, mac) {
-  const params = new URLSearchParams();
-  params.set("mac", mac);
+        const response = await fetch(GAS_ENDPOINT, {
+          method: "POST",
+          body: params,
+          signal: controller ? controller.signal : undefined,
+        });
 
-  return fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-    },
-    body: params,
-  });
-}
+        if (!response.ok) {
+          throw new Error(`GASがエラー(${response.status})を返しました。`);
+        }
 
-function buildCorsResponse(allowOrigin, status) {
-  return new Response(null, {
-    status,
-    headers: {
-      "Access-Control-Allow-Origin": allowOrigin,
-      "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type",
-      "Access-Control-Max-Age": "86400",
-    },
-  });
-}
+        let data = null;
+        try {
+          data = await response.json();
+        } catch (parseError) {
+          throw new Error("GASからの応答を解析できませんでした。");
+        }
 
-function buildJsonResponse(allowOrigin, status, payload) {
-  return new Response(JSON.stringify(payload), {
-    status,
-    headers: {
-      "Content-Type": "application/json; charset=UTF-8",
-      "Access-Control-Allow-Origin": allowOrigin,
-      "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type",
-      "Access-Control-Max-Age": "86400",
-    },
-  });
-}
+        if (!data) {
+          throw new Error("応答が不正です。");
+        }
+        if (data.error) {
+          throw new Error(String(data.error));
+        }
+        if (!data.password) {
+          throw new Error("パスワードが取得できませんでした。");
+        }
+        return data.password;
+      } catch (err) {
+        if (err && err.name === "AbortError") {
+          throw new Error("GASへの接続がタイムアウトしました。");
+        }
+        throw err;
+      } finally {
+        if (timeoutId !== null) {
+          clearTimeout(timeoutId);
+        }
+      }
+    }
 
-function buildJsonpResponse(allowOrigin, status, callback, payload) {
-  const body = `${callback}(${JSON.stringify(payload)});`;
-  const responseStatus = status >= 400 ? 200 : status;
+    function requestPasswordViaJsonp(mac, previousErrorMessage) {
+      return new Promise((resolve, reject) => {
+        const callbackName = `__gasJsonpCallback_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
+        let timerId = null;
+        let script = null;
 
-  return new Response(body, {
-    status: responseStatus,
-    headers: {
-      "Content-Type": "application/javascript; charset=UTF-8",
-      "Cache-Control": "no-store, max-age=0",
-      "Access-Control-Allow-Origin": allowOrigin,
-      "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type",
-      "Access-Control-Max-Age": "86400",
-    },
-  });
-}
+        const cleanup = () => {
+          if (timerId !== null) {
+            clearTimeout(timerId);
+            timerId = null;
+          }
+          if (script && script.parentNode) {
+            script.parentNode.removeChild(script);
+            script = null;
+          }
+          if (window[callbackName]) {
+            delete window[callbackName];
+          }
+        };
 
-function buildErrorResponse(allowOrigin, status, message, callback = "") {
-  const payload = { error: message };
-  if (callback) {
-    return buildJsonpResponse(allowOrigin, status, callback, payload);
-  }
-  return buildJsonResponse(allowOrigin, status, payload);
-}
+        window[callbackName] = (data) => {
+          cleanup();
+          if (!data) {
+            reject(new Error("応答が不正です。"));
+            return;
+          }
+          if (data.error) {
+            const prefix = previousErrorMessage ? `${previousErrorMessage} / ` : "";
+            reject(new Error(`${prefix}${data.error}`));
+            return;
+          }
+          if (!data.password) {
+            reject(new Error("パスワードが取得できませんでした。"));
+            return;
+          }
+          resolve(data.password);
+        };
+
+        const url = new URL(GAS_ENDPOINT);
+        url.searchParams.set("mac", mac);
+        url.searchParams.set("callback", callbackName);
+        url.searchParams.set("ts", Date.now().toString(36));
+
+        script = document.createElement("script");
+        script.src = url.toString();
+        script.async = true;
+        script.onerror = () => {
+          cleanup();
+          const prefix = previousErrorMessage ? `${previousErrorMessage} / ` : "";
+          reject(new Error(`${prefix}スクリプトの読み込みに失敗しました。（${url.origin} に接続できません）`));
+        };
+
+        timerId = setTimeout(() => {
+          cleanup();
+          const prefix = previousErrorMessage ? `${previousErrorMessage} / ` : "";
+          reject(new Error(`${prefix}応答がタイムアウトしました。`));
+        }, 8000);
+
+        document.body.appendChild(script);
+      });
+    }
+
+    function buildDiagnosticsAdvice(results) {
+      if (!Array.isArray(results) || results.length === 0) {
+        return "失敗した項目の内容を確認し、<br>・ネットワーク遮断やGASの公開設定<br>・GAS URLへのアクセス権限<br>・ブラウザ拡張や企業プロキシによるブロック<br>などを順に見直してください。";
+      }
+
+      const messages = [];
+      const fetchResult = results[0];
+      const jsonpResult = results[1];
+
+      if (fetchResult && fetchResult.ok) {
+        messages.push("Fetch経由の通信は成功しています。このまま通常利用できますが、他の診断結果も参考にしてください。");
+      } else {
+        messages.push("Fetch経路が失敗しています。GASのURL、最新デプロイ、ネットワーク遮断の有無を確認してください。");
+      }
+
+      if (jsonpResult && !jsonpResult.ok) {
+        messages.push("JSONPフォールバックが失敗しています。GETリクエストがブロックされていないか、ブラウザ拡張によるスクリプト制限を確認してください。");
+      }
+
+      messages.push("失敗した項目の詳細をもとに、上記のチェックポイントを順に見直してください。");
+
+      return messages.map((msg) => `・${msg}`).join("<br>");
+    }
+  </script>
+</body>
+</html>
