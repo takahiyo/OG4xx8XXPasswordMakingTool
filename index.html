@@ -116,7 +116,7 @@
   <button id="diagnosticsBtn">接続チェック</button>
   <div id="diagnostics" aria-live="polite"></div>
   <script>
-    const GAS_ENDPOINT = "https://script.google.com/macros/s/AKfycbyQIME9s-FjAmFWtdOKsEKpb4VxLxnXE-fSKNl8RC-ybbdtUK7_94MeCtT50K3G5TE_/exec";
+    const GAS_ENDPOINT = "https://script.google.com/macros/s/AKfycbxpKIuIrn_x2Rmlr7NDiuCx2sk2NZKruiTwW1dFBCJfr2VeFd6hsUxri0qQh0PVEdJT/exec";
     const GAS_ENDPOINT_URL = new URL(GAS_ENDPOINT);
     const BRIDGE_URL = new URL(GAS_ENDPOINT_URL);
     BRIDGE_URL.searchParams.set("mode", "bridge");
@@ -133,6 +133,8 @@
     BRIDGE_ALLOWED_ORIGINS.add("null");
     const BRIDGE_STATE = {
       frame: null,
+      childWindow: null,
+      initPingTimer: null,
       readyPromise: null,
       readyResolve: null,
       readyReject: null,
@@ -378,6 +380,32 @@
       return `${previous} / ${next}`;
     }
 
+    function startBridgeInitPings() {
+      stopBridgeInitPings();
+
+      const sendPing = () => {
+        const targetWindow = BRIDGE_STATE.childWindow || (BRIDGE_STATE.frame && BRIDGE_STATE.frame.contentWindow);
+        if (!targetWindow) {
+          return;
+        }
+        try {
+          targetWindow.postMessage({ type: "bridge-init" }, "*");
+        } catch (err) {
+          console.warn("Bridge init ping failed", err);
+        }
+      };
+
+      sendPing();
+      BRIDGE_STATE.initPingTimer = setInterval(sendPing, 500);
+    }
+
+    function stopBridgeInitPings() {
+      if (BRIDGE_STATE.initPingTimer !== null) {
+        clearInterval(BRIDGE_STATE.initPingTimer);
+        BRIDGE_STATE.initPingTimer = null;
+      }
+    }
+
     async function requestPasswordViaFetch(mac) {
       const supportsAbort = typeof AbortController === "function";
       const controller = supportsAbort ? new AbortController() : null;
@@ -435,22 +463,28 @@
     }
 
     function handleBridgeMessage(event) {
-      if (!BRIDGE_STATE.frame || event.source !== BRIDGE_STATE.frame.contentWindow) {
+      if (!BRIDGE_STATE.frame) {
         return;
       }
       if (!BRIDGE_ALLOWED_ORIGINS.has(event.origin)) {
         return;
       }
       const data = event.data || {};
-      if (data.type === "bridge-ready") {
+      const type = typeof data === "string" ? data : data.type;
+      if (type === "bridge-ready") {
+        BRIDGE_STATE.childWindow = event.source || null;
         completeBridgeReadySuccess();
         return;
       }
-      if (data.type !== "bridge-result") {
+      if (type !== "bridge-result") {
         return;
       }
 
-      const requestId = data.requestId;
+      if (!BRIDGE_STATE.childWindow && event.source) {
+        BRIDGE_STATE.childWindow = event.source;
+      }
+
+      const requestId = typeof data.requestId === "string" ? data.requestId : undefined;
       if (!requestId || !BRIDGE_STATE.pending.has(requestId)) {
         return;
       }
@@ -479,6 +513,7 @@
         clearTimeout(BRIDGE_STATE.readyTimeout);
         BRIDGE_STATE.readyTimeout = null;
       }
+      stopBridgeInitPings();
       const resolve = BRIDGE_STATE.readyResolve;
       BRIDGE_STATE.readyResolve = null;
       BRIDGE_STATE.readyReject = null;
@@ -497,6 +532,7 @@
         clearTimeout(BRIDGE_STATE.readyTimeout);
         BRIDGE_STATE.readyTimeout = null;
       }
+      stopBridgeInitPings();
       const reject = BRIDGE_STATE.readyReject;
       BRIDGE_STATE.readyResolve = null;
       BRIDGE_STATE.readyReject = null;
@@ -507,6 +543,7 @@
         BRIDGE_STATE.frame.parentNode.removeChild(BRIDGE_STATE.frame);
       }
       BRIDGE_STATE.frame = null;
+      BRIDGE_STATE.childWindow = null;
       BRIDGE_STATE.readyPromise = null;
       BRIDGE_STATE.lastFailureReason = reason || "unknown";
 
@@ -525,6 +562,13 @@
         return BRIDGE_STATE.readyPromise;
       }
 
+      if (BRIDGE_STATE.frame && BRIDGE_STATE.frame.parentNode) {
+        BRIDGE_STATE.frame.parentNode.removeChild(BRIDGE_STATE.frame);
+      }
+      BRIDGE_STATE.frame = null;
+      BRIDGE_STATE.childWindow = null;
+      stopBridgeInitPings();
+
       BRIDGE_STATE.readyPromise = new Promise((resolve, reject) => {
         BRIDGE_STATE.readyResolve = resolve;
         BRIDGE_STATE.readyReject = reject;
@@ -537,11 +581,17 @@
       const iframe = document.createElement("iframe");
       iframe.style.display = "none";
       iframe.src = BRIDGE_URL_STRING;
+      iframe.onload = () => {
+        BRIDGE_STATE.childWindow = iframe.contentWindow;
+      };
       iframe.onerror = () => {
         completeBridgeReadyFailure(new Error("ブリッジの読み込みに失敗しました。"), "load-error");
       };
       document.body.appendChild(iframe);
       BRIDGE_STATE.frame = iframe;
+      BRIDGE_STATE.childWindow = iframe.contentWindow;
+      BRIDGE_STATE.lastFailureReason = null;
+      startBridgeInitPings();
 
       return BRIDGE_STATE.readyPromise;
     }
@@ -554,7 +604,7 @@
         throw new Error(`${prefix}${normalizeErrorMessage(error)}`);
       }
 
-      if (!BRIDGE_STATE.frame || !BRIDGE_STATE.frame.contentWindow) {
+      if (!BRIDGE_STATE.frame) {
         const prefix = previousErrorMessage ? `${previousErrorMessage} / ` : "";
         throw new Error(`${prefix}ブリッジが利用できません。`);
       }
@@ -580,8 +630,16 @@
           previousErrorMessage,
         });
 
+        const targetWindow = BRIDGE_STATE.childWindow || (BRIDGE_STATE.frame && BRIDGE_STATE.frame.contentWindow);
+        if (!targetWindow) {
+          BRIDGE_STATE.pending.delete(requestId);
+          const prefix = previousErrorMessage ? `${previousErrorMessage} / ` : "";
+          reject(new Error(`${prefix}ブリッジが利用できません。`));
+          return;
+        }
+
         try {
-          BRIDGE_STATE.frame.contentWindow.postMessage({
+          targetWindow.postMessage({
             type: "generate",
             mac,
             requestId,
