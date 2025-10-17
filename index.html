@@ -139,6 +139,7 @@
       readyTimeout: null,
       pending: new Map(),
       listenerAttached: false,
+      lastFailureReason: null,
     };
 
     document.getElementById("generateBtn").addEventListener("click", handleGenerate);
@@ -231,6 +232,8 @@
       const list = document.createElement("ul");
       container.appendChild(list);
 
+      const results = [];
+
       const steps = [
         { label: "1) Fetch経由の通信", fn: diagnosticFetch },
         { label: "2) ブリッジiframeの初期化", fn: diagnosticBridge },
@@ -254,15 +257,18 @@
           const detail = await step.fn();
           result.classList.add("ok");
           result.textContent = detail;
+          results.push({ ok: true, detail, label: step.label });
         } catch (error) {
           result.classList.add("ng");
-          result.textContent = normalizeErrorMessage(error);
+          const message = normalizeErrorMessage(error);
+          result.textContent = message;
+          results.push({ ok: false, detail: message, label: step.label });
         }
       }
 
       const note = document.createElement("div");
       note.className = "note";
-      note.innerHTML = "失敗した項目の内容を確認し、<br>・ネットワーク遮断やGASの公開設定<br>・GAS URLへのアクセス権限<br>・ブラウザ拡張や企業プロキシによるブロック<br>などを順に見直してください。";
+      note.innerHTML = buildDiagnosticsAdvice(results);
       container.appendChild(note);
     }
 
@@ -287,7 +293,15 @@
         const frameSrc = BRIDGE_STATE.frame ? BRIDGE_STATE.frame.src : "不明";
         return `成功（応答 ${maskPassword(password)} ／ 約${duration}ms ／ 読み込み元 ${frameSrc}）`;
       } catch (error) {
-        throw new Error(`ブリッジ経由エラー：${normalizeErrorMessage(error)}`);
+        const base = normalizeErrorMessage(error);
+        const reason = BRIDGE_STATE.lastFailureReason;
+        let hint = "";
+        if (reason === "timeout") {
+          hint = "（bridge.htmlが8秒以内に応答していません。GAS側のウェブアプリを再デプロイし、匿名アクセスが許可されているか確認してください。）";
+        } else if (reason === "load-error") {
+          hint = "（bridge.htmlの読み込みがブロックされています。ウェブアプリURLや公開範囲、企業プロキシのブロック設定を確認してください。）";
+        }
+        throw new Error(`ブリッジ経由エラー：${base}${hint}`);
       }
     }
 
@@ -472,9 +486,10 @@
         resolve();
       }
       BRIDGE_STATE.readyPromise = Promise.resolve();
+      BRIDGE_STATE.lastFailureReason = null;
     }
 
-    function completeBridgeReadyFailure(error) {
+    function completeBridgeReadyFailure(error, reason) {
       if (!BRIDGE_STATE.readyPromise) {
         return;
       }
@@ -493,6 +508,7 @@
       }
       BRIDGE_STATE.frame = null;
       BRIDGE_STATE.readyPromise = null;
+      BRIDGE_STATE.lastFailureReason = reason || "unknown";
 
       const failure = error instanceof Error ? error : new Error("ブリッジ経由の通信に失敗しました。");
       BRIDGE_STATE.pending.forEach((pending) => {
@@ -515,14 +531,14 @@
       });
 
       BRIDGE_STATE.readyTimeout = setTimeout(() => {
-        completeBridgeReadyFailure(new Error("ブリッジの初期化に失敗しました。"));
+        completeBridgeReadyFailure(new Error("ブリッジの初期化に失敗しました。"), "timeout");
       }, 8000);
 
       const iframe = document.createElement("iframe");
       iframe.style.display = "none";
       iframe.src = BRIDGE_URL_STRING;
       iframe.onerror = () => {
-        completeBridgeReadyFailure(new Error("ブリッジの読み込みに失敗しました。"));
+        completeBridgeReadyFailure(new Error("ブリッジの読み込みに失敗しました。"), "load-error");
       };
       document.body.appendChild(iframe);
       BRIDGE_STATE.frame = iframe;
@@ -628,7 +644,7 @@
         script.onerror = () => {
           cleanup();
           const prefix = previousErrorMessage ? `${previousErrorMessage} / ` : "";
-          reject(new Error(`${prefix}スクリプトの読み込みに失敗しました。`));
+          reject(new Error(`${prefix}スクリプトの読み込みに失敗しました。（${url.origin} に接続できません）`));
         };
 
         timerId = setTimeout(() => {
@@ -639,6 +655,35 @@
 
         document.body.appendChild(script);
       });
+    }
+
+    function buildDiagnosticsAdvice(results) {
+      if (!Array.isArray(results) || results.length === 0) {
+        return "失敗した項目の内容を確認し、<br>・ネットワーク遮断やGASの公開設定<br>・GAS URLへのアクセス権限<br>・ブラウザ拡張や企業プロキシによるブロック<br>などを順に見直してください。";
+      }
+
+      const messages = [];
+      const fetchResult = results[0];
+      const bridgeResult = results[1];
+      const jsonpResult = results[2];
+
+      if (fetchResult && fetchResult.ok) {
+        messages.push("Fetch経由の通信は成功しています。このまま通常利用できますが、他の診断結果も参考にしてください。");
+      } else {
+        messages.push("Fetch経路が失敗しています。GASのURL、最新デプロイ、ネットワーク遮断の有無を確認してください。");
+      }
+
+      if (bridgeResult && !bridgeResult.ok) {
+        messages.push("ブリッジiframeが失敗しています。bridge.htmlを含めて再デプロイし、アクセス権限が「全員」になっているかを確認してください。");
+      }
+
+      if (jsonpResult && !jsonpResult.ok) {
+        messages.push("JSONPフォールバックが失敗しています。GETリクエストがブロックされていないか、ブラウザ拡張によるスクリプト制限を確認してください。");
+      }
+
+      messages.push("失敗した項目の詳細をもとに、上記のチェックポイントを順に見直してください。");
+
+      return messages.map((msg) => `・${msg}`).join("<br>");
     }
   </script>
 </body>
