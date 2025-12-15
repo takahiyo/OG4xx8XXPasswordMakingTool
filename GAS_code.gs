@@ -1,5 +1,6 @@
 // Code.gs
 const FIXED_KEY = 'VoIPGateway48231';
+// スクリプトプロパティに設定したスプレッドシートIDのキー名
 const SPREADSHEET_ID_PROP = 'SPREADSHEET_ID';
 const ADMIN_TOKEN_PROP = 'ADMIN_TOKEN';
 const ADMIN_ALLOWED_IPS_PROP = 'ADMIN_ALLOWED_IPS';
