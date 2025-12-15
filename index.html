@@ -54,48 +54,6 @@
     #password {
       background: #e9ecef;
     }
-    #diagnosticsBtn {
-      background: #6c757d;
-    }
-    #diagnosticsBtn:active {
-      background: #495057;
-    }
-    #diagnostics {
-      margin-top: 1.5em;
-      font-size: 0.95em;
-      color: #212529;
-      background: #fff;
-      border: 1px solid #ced4da;
-      border-radius: 4px;
-      padding: 0.9em 1em;
-      display: none;
-    }
-    #diagnostics h3 {
-      margin: 0 0 0.6em;
-      font-size: 1em;
-    }
-    #diagnostics ul {
-      margin: 0;
-      padding-left: 1.1em;
-    }
-    #diagnostics li {
-      margin-bottom: 0.45em;
-    }
-    #diagnostics li span.result {
-      display: block;
-      margin-top: 0.2em;
-    }
-    #diagnostics li span.result.ok {
-      color: #137333;
-    }
-    #diagnostics li span.result.ng {
-      color: #c41c1c;
-    }
-    #diagnostics .note {
-      margin-top: 0.8em;
-      font-size: 0.9em;
-      color: #495057;
-    }
     @media (max-width: 480px) {
       body {
         max-width: 98vw;
@@ -113,8 +71,6 @@
   <label for="password">パスワード：</label>
   <input type="text" id="password" size="20" readonly>
   <button id="copyBtn">コピー</button>
-  <button id="diagnosticsBtn">接続チェック</button>
-  <div id="diagnostics" aria-live="polite"></div>
   <script>
     // Cloudflare Workers を経由したエンドポイントに置き換えてください。
     // ルートパスで公開している場合はサブパス不要です。必要に応じて /api/password などのパスを追加してください。
@@ -123,8 +79,6 @@
 
     document.getElementById("generateBtn").addEventListener("click", handleGenerate);
     document.getElementById("copyBtn").addEventListener("click", copyToClipboard);
-    document.getElementById("diagnosticsBtn").addEventListener("click", runDiagnostics);
-
     async function handleGenerate() {
       const macInput = document.getElementById("macInput");
       const errorEl = document.getElementById("error");
@@ -148,7 +102,7 @@
         passwordEl.value = password;
       } catch (err) {
         const baseMessage = err && err.message ? err.message : "サーバー通信に失敗しました。";
-        errorEl.textContent = `${baseMessage}（「接続チェック」で詳細を確認できます）`;
+        errorEl.textContent = baseMessage;
         macInput.focus();
       }
     }
@@ -197,91 +151,6 @@
       }).catch(() => {
         alert("クリップボードへのコピーに失敗しました");
       });
-    }
-
-    async function runDiagnostics() {
-      const container = document.getElementById("diagnostics");
-      container.style.display = "block";
-      container.textContent = "";
-
-      const heading = document.createElement("h3");
-      heading.textContent = "接続チェック結果";
-      container.appendChild(heading);
-
-      const list = document.createElement("ul");
-      container.appendChild(list);
-
-      const results = [];
-
-      const steps = [
-        { label: "1) Fetch経由の通信", fn: diagnosticFetch },
-        { label: "2) JSONPフォールバック", fn: diagnosticJsonp },
-      ];
-
-      for (const step of steps) {
-        const item = document.createElement("li");
-        const label = document.createElement("span");
-        label.textContent = step.label;
-        item.appendChild(label);
-
-        const result = document.createElement("span");
-        result.className = "result";
-        result.textContent = "診断中...";
-        item.appendChild(result);
-
-        list.appendChild(item);
-
-        try {
-          const detail = await step.fn();
-          result.classList.add("ok");
-          result.textContent = detail;
-          results.push({ ok: true, detail, label: step.label });
-        } catch (error) {
-          result.classList.add("ng");
-          const message = normalizeErrorMessage(error);
-          result.textContent = message;
-          results.push({ ok: false, detail: message, label: step.label });
-        }
-      }
-
-      const note = document.createElement("div");
-      note.className = "note";
-      note.innerHTML = buildDiagnosticsAdvice(results);
-      container.appendChild(note);
-    }
-
-    async function diagnosticFetch() {
-      const testMac = "001122334455";
-      const start = typeof performance !== "undefined" ? performance.now() : Date.now();
-      try {
-        const password = await requestPasswordViaFetch(testMac);
-        const duration = Math.round((typeof performance !== "undefined" ? performance.now() : Date.now()) - start);
-        return `成功（応答 ${maskPassword(password)} ／ 約${duration}ms）`;
-      } catch (error) {
-        throw new Error(`Fetch通信エラー：${normalizeErrorMessage(error)}`);
-      }
-    }
-
-    async function diagnosticJsonp() {
-      const testMac = "001122334455";
-      const start = typeof performance !== "undefined" ? performance.now() : Date.now();
-      try {
-        const password = await requestPasswordViaJsonp(testMac, "");
-        const duration = Math.round((typeof performance !== "undefined" ? performance.now() : Date.now()) - start);
-        return `成功（応答 ${maskPassword(password)} ／ 約${duration}ms）`;
-      } catch (error) {
-        throw new Error(`JSONP経由エラー：${normalizeErrorMessage(error)}`);
-      }
-    }
-
-    function maskPassword(password) {
-      if (!password) {
-        return "空";
-      }
-      if (password.length <= 4) {
-        return "*".repeat(password.length);
-      }
-      return `${password.slice(0, 2)}***${password.slice(-2)}`;
     }
 
     async function requestPassword(mac) {
@@ -437,29 +306,6 @@
       });
     }
 
-    function buildDiagnosticsAdvice(results) {
-      if (!Array.isArray(results) || results.length === 0) {
-        return "失敗した項目の内容を確認し、<br>・ネットワーク遮断やGASの公開設定<br>・GAS URLへのアクセス権限<br>・ブラウザ拡張や企業プロキシによるブロック<br>などを順に見直してください。";
-      }
-
-      const messages = [];
-      const fetchResult = results[0];
-      const jsonpResult = results[1];
-
-      if (fetchResult && fetchResult.ok) {
-        messages.push("Fetch経由の通信は成功しています。このまま通常利用できますが、他の診断結果も参考にしてください。");
-      } else {
-        messages.push("Fetch経路が失敗しています。GASのURL、最新デプロイ、ネットワーク遮断の有無を確認してください。");
-      }
-
-      if (jsonpResult && !jsonpResult.ok) {
-        messages.push("JSONPフォールバックが失敗しています。GETリクエストがブロックされていないか、ブラウザ拡張によるスクリプト制限を確認してください。");
-      }
-
-      messages.push("失敗した項目の詳細をもとに、上記のチェックポイントを順に見直してください。");
-
-      return messages.map((msg) => `・${msg}`).join("<br>");
-    }
   </script>
 </body>
 </html>
