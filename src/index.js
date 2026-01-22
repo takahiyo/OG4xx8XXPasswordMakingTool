@@ -6,12 +6,11 @@ const DEFAULTS = {
   maxCallbackLength: 100,
   adminPath: "/admin",
   adminTokenQueryKey: "token",
-  // 固定キー
   fixedKey: "VoIPGateway48231", 
 };
 
-// --- フロントエンド(HTML)のソースコード ---
-// API接続先を自動調整するように修正済み
+// --- フロントエンド(HTML) ---
+// この部分が画面のデザインと動作を定義しています
 const HTML_CONTENT = `
 <!DOCTYPE html>
 <html lang="ja">
@@ -41,7 +40,6 @@ const HTML_CONTENT = `
   <input type="text" id="password" size="20" readonly>
   <button id="copyBtn">コピー</button>
   <script>
-    // 現在のページURLをAPIエンドポイントとして利用
     const API_ENDPOINT = window.location.href;
 
     document.getElementById("generateBtn").addEventListener("click", handleGenerate);
@@ -59,15 +57,10 @@ const HTML_CONTENT = `
       if (!macRaw) { errorEl.textContent = "MACアドレスを入力してください。"; return; }
 
       try {
-        // POST送信でパスワード生成を要求
         const formData = new FormData();
         formData.append("mac", macRaw);
         
-        const response = await fetch(API_ENDPOINT, {
-          method: "POST",
-          body: formData
-        });
-
+        const response = await fetch(API_ENDPOINT, { method: "POST", body: formData });
         const data = await response.json();
         
         if (!response.ok || data.error) {
@@ -94,72 +87,79 @@ const HTML_CONTENT = `
 
 export default {
   async fetch(request, env, ctx) {
-    const config = buildConfig(env);
-    const url = new URL(request.url);
+    // 【安全対策】全体をtry-catchで囲み、万が一のエラー時も詳細を表示する
+    try {
+      const config = buildConfig(env);
+      const url = new URL(request.url);
 
-    // 1. 管理者用アクセス (/admin)
-    if (url.pathname === config.adminPath) {
-      return handleAdminRequest(request, env, config);
-    }
+      // 1. 管理者用アクセス
+      if (url.pathname === config.adminPath) {
+        return handleAdminRequest(request, env, config);
+      }
 
-    // 2. ブラウザからの通常アクセス (HTMLを表示)
-    // 条件: GETメソッド かつ クエリパラメータ(mac)が無い場合
-    if (request.method === "GET" && !url.searchParams.has("mac") && !url.searchParams.has("callback")) {
-      return new Response(HTML_CONTENT, {
-        headers: { "Content-Type": "text/html; charset=utf-8" },
+      // 2. ブラウザからの通常アクセス (HTMLを表示)
+      // 条件: GETメソッド かつ パラメータが無い場合、HTMLを返す
+      if (request.method === "GET" && !url.searchParams.has("mac") && !url.searchParams.has("callback")) {
+        return new Response(HTML_CONTENT, {
+          headers: { "Content-Type": "text/html; charset=utf-8" },
+        });
+      }
+
+      // 3. APIリクエスト処理 (POSTなどでパスワード生成)
+      if (request.method === "OPTIONS") {
+        return buildCorsResponse(config.allowOrigin, 204);
+      }
+      if (request.method !== "GET" && request.method !== "POST") {
+        return buildErrorResponse(config.allowOrigin, 405, "Method Not Allowed");
+      }
+
+      let params;
+      try {
+        params = await extractParams(request, config.maxCallbackLength);
+      } catch (e) {
+        return buildErrorResponse(config.allowOrigin, 400, "Invalid Request");
+      }
+
+      const { mac, callback, via } = params;
+      if (!mac) {
+        return buildErrorResponse(config.allowOrigin, 400, "MAC アドレスを指定してください。", callback);
+      }
+
+      const result = generatePassword(mac, config.fixedKey);
+      if (result.error) {
+        return buildErrorResponse(config.allowOrigin, 400, result.error, callback);
+      }
+
+      // D1へログ保存
+      ctx.waitUntil(
+        saveLogToD1(env, {
+          timestamp: new Date().toISOString(),
+          mac: normalizeMac(mac),
+          password: result.password,
+          via: via || config.via,
+          environment: config.environment,
+        })
+      );
+
+      if (callback) {
+        return buildJsonpResponse(config.allowOrigin, 200, callback, result);
+      }
+      return buildJsonResponse(config.allowOrigin, 200, result);
+
+    } catch (criticalError) {
+      // システムエラーが発生した場合、画面に表示する
+      return new Response(`System Error: ${criticalError.message}\n${criticalError.stack}`, {
+        status: 500,
+        headers: { "Content-Type": "text/plain; charset=utf-8" }
       });
     }
-
-    // 3. APIリクエスト処理 (パスワード生成)
-    // CORS対応
-    if (request.method === "OPTIONS") {
-      return buildCorsResponse(config.allowOrigin, 204);
-    }
-    if (request.method !== "GET" && request.method !== "POST") {
-      return buildErrorResponse(config.allowOrigin, 405, "Method Not Allowed");
-    }
-
-    // パラメータ取得
-    let params;
-    try {
-      params = await extractParams(request, config.maxCallbackLength);
-    } catch (e) {
-      return buildErrorResponse(config.allowOrigin, 400, "Invalid Request");
-    }
-
-    const { mac, callback, via } = params;
-    if (!mac) {
-      return buildErrorResponse(config.allowOrigin, 400, "MAC アドレスを指定してください。", callback);
-    }
-
-    // 生成ロジック
-    const result = generatePassword(mac, config.fixedKey);
-    if (result.error) {
-      return buildErrorResponse(config.allowOrigin, 400, result.error, callback);
-    }
-
-    // D1へログ保存 (非同期)
-    ctx.waitUntil(
-      saveLogToD1(env, {
-        timestamp: new Date().toISOString(),
-        mac: normalizeMac(mac),
-        password: result.password,
-        via: via || config.via,
-        environment: config.environment,
-      })
-    );
-
-    // レスポンス
-    if (callback) {
-      return buildJsonpResponse(config.allowOrigin, 200, callback, result);
-    }
-    return buildJsonResponse(config.allowOrigin, 200, result);
   },
 };
 
-// --- D1保存関数 ---
+// --- 以下、ヘルパー関数 ---
+
 async function saveLogToD1(env, log) {
-  if (!env.DB) return; // DB設定がない場合はスキップ
+  if (!env.DB) return; 
   try {
     await env.DB.prepare(
       "INSERT INTO logs (timestamp, mac, password, via, environment) VALUES (?, ?, ?, ?, ?)"
@@ -171,7 +171,6 @@ async function saveLogToD1(env, log) {
   }
 }
 
-// --- 管理者用関数 ---
 async function handleAdminRequest(request, env, config) {
   const url = new URL(request.url);
   const token = url.searchParams.get(config.adminTokenQueryKey);
@@ -180,7 +179,7 @@ async function handleAdminRequest(request, env, config) {
     return buildErrorResponse(config.allowOrigin, 401, "Unauthorized");
   }
   if (!env.DB) {
-    return buildErrorResponse(config.allowOrigin, 500, "Database not configured");
+    return buildErrorResponse(config.allowOrigin, 500, "Database not configured (env.DB is missing)");
   }
 
   try {
@@ -189,11 +188,10 @@ async function handleAdminRequest(request, env, config) {
     ).all();
     return buildJsonResponse(config.allowOrigin, 200, { logs: results });
   } catch (err) {
-    return buildErrorResponse(config.allowOrigin, 500, err.message);
+    return buildErrorResponse(config.allowOrigin, 500, "DB Error: " + err.message);
   }
 }
 
-// --- ユーティリティ関数 ---
 function buildConfig(env) {
   return {
     allowOrigin: env.ALLOW_ORIGIN || DEFAULTS.allowOrigin,
@@ -203,7 +201,7 @@ function buildConfig(env) {
     adminPath: env.ADMIN_PATH || DEFAULTS.adminPath,
     adminToken: env.ADMIN_TOKEN || "", 
     adminTokenQueryKey: env.ADMIN_TOKEN_QUERY_KEY || DEFAULTS.adminTokenQueryKey,
-    fixedKey: env.FIXED_KEY || DEFAULTS.fixedKey, // 環境変数があれば優先
+    fixedKey: env.FIXED_KEY || DEFAULTS.fixedKey,
   };
 }
 
