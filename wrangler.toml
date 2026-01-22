@@ -9,6 +9,9 @@ FIXED_KEY = "VoIPGateway48231"
 FIREBASE_PROJECT_ID = "og4xx8xxpasswordmakingtool"
 FIREBASE_DB_URL = "https://og4xx8xxpasswordmakingtool-default-rtdb.firebaseio.com"
 FIREBASE_LOG_PATH = "logs"
+LOG_CACHE_KEY = "ALL_LOGS"
+ADMIN_PATH = "/admin"
+ADMIN_TOKEN_QUERY_KEY = "token"
 
 [env.production]
 name = "og4xx-password-tool"
@@ -19,3 +22,11 @@ ENVIRONMENT = "production"
 name = "og4xx-password-tool-dev"
 [env.dev.vars]
 ENVIRONMENT = "development"
+
+[[kv_namespaces]]
+binding = "LOG_CACHE"
+id = "REPLACE_WITH_PRODUCTION_KV_ID"
+
+[[env.dev.kv_namespaces]]
+binding = "LOG_CACHE"
+id = "REPLACE_WITH_DEV_KV_ID"

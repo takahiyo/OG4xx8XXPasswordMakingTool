@@ -8,15 +8,23 @@ const DEFAULTS = {
   environment: "unknown",
   via: "API",
   logPath: "logs",
+  logCacheKey: "ALL_LOGS",
   maxCallbackLength: 100,
+  adminPath: "/admin",
+  adminTokenQueryKey: "token",
 };
 
 export default {
   async fetch(request, env, ctx) {
     const config = buildConfig(env);
+    const url = new URL(request.url);
 
     if (request.method === "OPTIONS") {
       return buildCorsResponse(config.allowOrigin, 204);
+    }
+
+    if (url.pathname === config.adminPath) {
+      return handleAdminRequest(request, env, config);
     }
 
     if (request.method !== "GET" && request.method !== "POST") {
@@ -69,7 +77,7 @@ export default {
     }
 
     ctx.waitUntil(
-      logToFirebase(config, {
+      logToFirebase(config, env, {
         timestamp: new Date().toISOString(),
         mac: normalizeMac(mac),
         password: result.password,
@@ -92,12 +100,17 @@ function buildConfig(env) {
     environment: env.ENVIRONMENT || DEFAULTS.environment,
     via: DEFAULTS.via,
     logPath: env.FIREBASE_LOG_PATH || DEFAULTS.logPath,
+    logCacheKey: env.LOG_CACHE_KEY || DEFAULTS.logCacheKey,
     fixedKey: env.FIXED_KEY || "",
     firebaseDbUrl: env.FIREBASE_DB_URL || "",
     firebaseProjectId: env.FIREBASE_PROJECT_ID || "",
     firebaseClientEmail: env.FIREBASE_CLIENT_EMAIL || "",
     firebasePrivateKey: env.FIREBASE_PRIVATE_KEY || "",
     maxCallbackLength: DEFAULTS.maxCallbackLength,
+    adminPath: env.ADMIN_PATH || DEFAULTS.adminPath,
+    adminToken: env.ADMIN_TOKEN || "",
+    adminTokenQueryKey: env.ADMIN_TOKEN_QUERY_KEY || DEFAULTS.adminTokenQueryKey,
+    logCacheTtlSeconds: parsePositiveInt(env.LOG_CACHE_TTL_SECONDS),
   };
 }
 
@@ -134,7 +147,7 @@ function normalizeMac(value) {
   return String(value).replace(/[-:.\s]/g, "").toUpperCase();
 }
 
-async function logToFirebase(config, logData) {
+async function logToFirebase(config, env, logData) {
   if (!config.firebaseDbUrl) {
     console.error("FIREBASE_DB_URL が設定されていません。");
     return;
@@ -158,10 +171,134 @@ async function logToFirebase(config, logData) {
 
     if (!response.ok) {
       console.error("Firebase 書き込み失敗:", await response.text());
+      return;
     }
+
+    await invalidateLogCache(config, env);
   } catch (error) {
     console.error("ログ保存中にエラーが発生しました:", error);
   }
+}
+
+async function invalidateLogCache(config, env) {
+  if (!env.LOG_CACHE) return;
+  if (!config.logCacheKey) return;
+
+  try {
+    await env.LOG_CACHE.delete(config.logCacheKey);
+  } catch (error) {
+    console.error("キャッシュ削除中にエラーが発生しました:", error);
+  }
+}
+
+async function handleAdminRequest(request, env, config) {
+  if (request.method !== "GET") {
+    return buildErrorResponse(
+      config.allowOrigin,
+      405,
+      "管理者 API は GET のみ対応しています。"
+    );
+  }
+
+  if (!config.adminToken) {
+    return buildErrorResponse(
+      config.allowOrigin,
+      500,
+      "ADMIN_TOKEN が設定されていません。"
+    );
+  }
+
+  if (!env.LOG_CACHE) {
+    return buildErrorResponse(
+      config.allowOrigin,
+      500,
+      "LOG_CACHE の KV バインディングが設定されていません。"
+    );
+  }
+
+  const url = new URL(request.url);
+  const token = url.searchParams.get(config.adminTokenQueryKey) || "";
+  if (token !== config.adminToken) {
+    return buildErrorResponse(
+      config.allowOrigin,
+      401,
+      "管理者トークンが不正です。"
+    );
+  }
+
+  const cached = await env.LOG_CACHE.get(config.logCacheKey, "json");
+  if (cached) {
+    return buildJsonResponse(config.allowOrigin, 200, {
+      ...cached,
+      source: "cache",
+    });
+  }
+
+  const logs = await fetchLogsFromFirebase(config);
+  if (logs === null) {
+    return buildErrorResponse(
+      config.allowOrigin,
+      502,
+      "ログの取得に失敗しました。"
+    );
+  }
+
+  const payload = {
+    logs,
+    fetchedAt: new Date().toISOString(),
+  };
+
+  const putOptions = config.logCacheTtlSeconds
+    ? { expirationTtl: config.logCacheTtlSeconds }
+    : undefined;
+
+  await env.LOG_CACHE.put(
+    config.logCacheKey,
+    JSON.stringify(payload),
+    putOptions
+  );
+
+  return buildJsonResponse(config.allowOrigin, 200, {
+    ...payload,
+    source: "db",
+  });
+}
+
+async function fetchLogsFromFirebase(config) {
+  if (!config.firebaseDbUrl) {
+    console.error("FIREBASE_DB_URL が設定されていません。");
+    return null;
+  }
+
+  try {
+    const token = await getAccessToken(config);
+    if (!token) {
+      console.error("Firebase アクセストークンの取得に失敗しました。");
+      return null;
+    }
+
+    const url = new URL(`${config.firebaseDbUrl}/${config.logPath}.json`);
+    url.searchParams.set("access_token", token);
+
+    const response = await fetch(url.toString(), { method: "GET" });
+    if (!response.ok) {
+      console.error("Firebase 読み取り失敗:", await response.text());
+      return null;
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error("ログ取得中にエラーが発生しました:", error);
+    return null;
+  }
+}
+
+function parsePositiveInt(value) {
+  const parsed = Number.parseInt(value ?? "", 10);
+  if (Number.isNaN(parsed) || parsed <= 0) {
+    return null;
+  }
+  return parsed;
 }
 
 async function getAccessToken(config) {
