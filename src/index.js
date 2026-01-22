@@ -6,11 +6,12 @@ const DEFAULTS = {
   maxCallbackLength: 100,
   adminPath: "/admin",
   adminTokenQueryKey: "token",
+  // 固定キー (環境変数 FIXED_KEY が設定されていればそちらが優先されます)
   fixedKey: "VoIPGateway48231", 
 };
 
 // --- フロントエンド(HTML) ---
-// この部分が画面のデザインと動作を定義しています
+// ブラウザに表示されるのは、この HTML_CONTENT の中身だけです
 const HTML_CONTENT = `
 <!DOCTYPE html>
 <html lang="ja">
@@ -87,7 +88,7 @@ const HTML_CONTENT = `
 
 export default {
   async fetch(request, env, ctx) {
-    // 【安全対策】全体をtry-catchで囲み、万が一のエラー時も詳細を表示する
+    // 安全対策: 全体をtry-catchで囲み、エラー時は詳細を表示
     try {
       const config = buildConfig(env);
       const url = new URL(request.url);
@@ -97,8 +98,8 @@ export default {
         return handleAdminRequest(request, env, config);
       }
 
-      // 2. ブラウザからの通常アクセス (HTMLを表示)
-      // 条件: GETメソッド かつ パラメータが無い場合、HTMLを返す
+      // 2. ブラウザからの通常アクセス (ここが重要！)
+      // GETメソッドで、かつパラメータが無い場合は「HTML画面」を返します
       if (request.method === "GET" && !url.searchParams.has("mac") && !url.searchParams.has("callback")) {
         return new Response(HTML_CONTENT, {
           headers: { "Content-Type": "text/html; charset=utf-8" },
