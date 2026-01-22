@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>パスワード生成ツール (Dev)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <h2>OG4xx/OG8xx パスワード生成ツール</h2>
+  
+  <label for="macInput">MACアドレス：</label>
+  <input type="text" id="macInput" size="20" autocomplete="off" placeholder="例）00:11:22:33:44:55">
+  <button id="generateBtn">生成</button>
+  
+  <p id="error"></p>
+  
+  <label for="password">パスワード：</label>
+  <input type="text" id="password" size="20" readonly>
+  <button id="copyBtn">コピー</button>
+
+  <script src="config.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
