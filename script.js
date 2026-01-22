@@ -32,18 +32,19 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function fetchPassword(mac) {
-        const formData = new FormData();
-        formData.append('mac', mac);
-
-        // Configからエンドポイントを参照
+        // JSON形式で送信するように変更
         const response = await fetch(AppConfig.API_ENDPOINT, {
             method: "POST",
-            body: formData
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ mac: mac })
         });
 
         if (!response.ok) {
             const errorData = await response.json().catch(() => ({}));
-            throw new Error(errorData.error || `エラー: ${response.status}`);
+            // 具体的なエラー内容を表示
+            throw new Error(errorData.error || `サーバーエラー (${response.status})`);
         }
 
         const data = await response.json();
