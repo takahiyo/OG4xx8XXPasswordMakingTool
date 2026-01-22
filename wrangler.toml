@@ -1,0 +1,34 @@
+name = "og4xx-password-tool"
+main = "src/index.js"
+compatibility_date = "2024-01-01"
+
+# [共通変数]
+[vars]
+ALLOW_ORIGIN = "*"
+FIXED_KEY = "VoIPGateway48231"
+ADMIN_PATH = "/admin"
+ADMIN_TOKEN_QUERY_KEY = "token"
+
+# [本番環境設定]
+[env.production]
+name = "og4xx-password-tool"
+[env.production.vars]
+ENVIRONMENT = "production"
+
+# ▼ ここに手順1でコピーしたIDを貼り付け ▼
+[[d1_databases]]
+binding = "DB"
+database_name = "og4xx8xxpassword_db"
+database_id = "ここにIDを貼り付け"
+
+# [開発環境設定]
+# 今回は簡単のため、開発環境も同じDBを参照する設定にします
+[env.dev]
+name = "og4xx-password-tool-dev"
+[env.dev.vars]
+ENVIRONMENT = "development"
+
+[[env.dev.d1_databases]]
+binding = "DB"
+database_name = "og4xx8xxpassword_db"
+database_id = "ここにIDを貼り付け"
