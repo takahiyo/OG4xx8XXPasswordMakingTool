@@ -19,7 +19,7 @@ ENVIRONMENT = "production"
 [[d1_databases]]
 binding = "DB"
 database_name = "og4xx8xxpassword_db"
-database_id = "ここにIDを貼り付け"
+database_id = "2e8b1bdc-2dcb-48ab-afd9-2719435dce07"
 
 # [開発環境設定]
 # 今回は簡単のため、開発環境も同じDBを参照する設定にします
