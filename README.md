@@ -1,22 +1,30 @@
 # パスワード生成ツール
 
-MAC アドレスからパスワードを生成する Google Apps Script/Cloudflare Worker/静的 HTML のセットです。
+MAC アドレスからパスワードを生成する Cloudflare Workers と静的 HTML のセットです。
 
-## Google Apps Script (GAS)
-- `GAS_code.gs` を Web アプリとしてデプロイすると、MAC アドレスを受け取りパスワードを返します。
-- 通常のリクエストは `/exec?mac=<MAC>` または POST で受け付けます。
+## Cloudflare Workers
+- `src/index.js` がパスワード生成と Firebase Realtime Database へのログ保存を担います。
+- 通常のリクエストは `GET /?mac=<MAC>` または `POST` で受け付けます。
 
-### 管理者向けエンドポイント（非公開）
-- `doGet` の `/admin` クエリは管理用です。一般利用のフロントや README 以外には露出させません。
-- トークン（`token` クエリ）または許可 IP で認証します。
-  - `ADMIN_TOKEN`・`ADMIN_ALLOWED_IPS` はスクリプトプロパティで設定してください。
-  - `SPREADSHEET_ID` にはログ保存先スプレッドシートの ID を設定します。
-- 取得パラメータ
-  - `from`/`to`: 期間指定（`YYYY-MM-DD` など `Date` 変換可能な文字列）。
-  - `mac`: MAC フィルタ（区切り無し 12 桁で比較）。
-  - `format`: `json`（既定）または `csv`。CSV は `Content-Disposition` が付与されダウンロードできます。
-- 返却値
-  - JSON: `{"logs": [{timestamp, mac, password, via}, ...]}`
-  - CSV: ヘッダー行付きの CSV ファイルを返します。
+### 設定 (wrangler.toml)
+- `FIXED_KEY` はパスワード生成用の固定キーです。
+- `FIREBASE_DB_URL` は Realtime Database の URL を指定します。
+- `FIREBASE_LOG_PATH` はログの保存先パスを指定します。
 
-> 管理用ルートの URL やトークンは管理者のみで共有し、一般利用者には知らせない運用としてください。
+### Secrets (wrangler secret)
+秘密情報は `wrangler secret` で設定してください。
+
+```
+npx wrangler secret put FIREBASE_CLIENT_EMAIL
+npx wrangler secret put FIREBASE_PRIVATE_KEY
+```
+
+### 環境分離
+`wrangler.toml` の `env.production` と `env.dev` で環境を分離しています。開発環境へデプロイする場合は `--env dev` を指定してください。
+
+```
+npx wrangler deploy --env dev
+```
+
+### フロントエンドの接続先
+`index.html` のエンドポイントが Workers の URL を指しているか確認してください。

@@ -1,0 +1,21 @@
+name = "og4xx-password-tool"
+main = "src/index.js"
+compatibility_date = "2024-01-01"
+
+[vars]
+ALLOW_ORIGIN = "*"
+ENVIRONMENT = "production"
+FIXED_KEY = "VoIPGateway48231"
+FIREBASE_PROJECT_ID = "og4xx8xxpasswordmakingtool"
+FIREBASE_DB_URL = "https://og4xx8xxpasswordmakingtool-default-rtdb.firebaseio.com"
+FIREBASE_LOG_PATH = "logs"
+
+[env.production]
+name = "og4xx-password-tool"
+[env.production.vars]
+ENVIRONMENT = "production"
+
+[env.dev]
+name = "og4xx-password-tool-dev"
+[env.dev.vars]
+ENVIRONMENT = "development"
