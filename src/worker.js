@@ -1,7 +1,8 @@
 const FIXED_KEY = 'VoIPGateway48231';
 
 export default {
-  async fetch(request, env) {
+  // 【変更点1】引数に ctx を追加しました
+  async fetch(request, env, ctx) {
     const allowOrigin = "*";
 
     // CORS (OPTIONS) 対応
@@ -17,7 +18,7 @@ export default {
     }
 
     try {
-      // パラメータ取得 (GET / POST-JSON / POST-Form 対応)
+      // パラメータ取得
       let macRaw = "";
       const url = new URL(request.url);
 
@@ -50,13 +51,17 @@ export default {
       // パスワード生成
       const password = generatePasswordLogic(normalized);
 
-      // D1へログ保存
+      // 【変更点2】D1へログ保存 (ctx.waitUntil を使用して完了を保証)
       if (env.DB) {
-        env.DB.prepare(
+        const savePromise = env.DB.prepare(
           "INSERT INTO request_logs (timestamp, mac, password, via) VALUES (?, ?, ?, ?)"
         ).bind(new Date().toISOString(), normalized, password, 'CloudflareWorker')
          .run()
          .catch(err => console.error("D1 Log Error:", err));
+
+        ctx.waitUntil(savePromise);
+      } else {
+        console.error("DB binding not found");
       }
 
       return jsonResponse(allowOrigin, 200, { password });
