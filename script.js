@@ -13,6 +13,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const normalized = normalizeMac(macRaw);
         const validationError = validateMac(normalized);
 
+        // 前回の表示をクリア
         errorEl.textContent = "";
         passwordEl.value = "";
 
@@ -32,7 +33,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function fetchPassword(mac) {
-        // JSON形式で送信するように変更
+        // Workerへリクエスト送信
         const response = await fetch(AppConfig.API_ENDPOINT, {
             method: "POST",
             headers: {
@@ -43,11 +44,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (!response.ok) {
             const errorData = await response.json().catch(() => ({}));
-            // 具体的なエラー内容を表示
-            throw new Error(errorData.error || `サーバーエラー (${response.status})`);
+            throw new Error(errorData.error || `通信エラー (${response.status})`);
         }
 
         const data = await response.json();
+
+        // 【デバッグ用】サーバーからデバッグ情報が返ってきたらアラート表示
+        if (data.debug_info) {
+            alert("DB診断結果:\n" + data.debug_info);
+        }
+
         if (!data.password) {
             throw new Error("パスワードが取得できませんでした。");
         }
