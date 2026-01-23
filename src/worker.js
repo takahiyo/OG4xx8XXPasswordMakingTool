@@ -1,18 +1,17 @@
 const FIXED_KEY = 'VoIPGateway48231';
+const ALLOW_ORIGIN = "*";
+const REQUEST_LOG_INSERT =
+  "INSERT INTO request_logs (timestamp, mac, password, via) VALUES (?, ?, ?, ?)";
 
 export default {
   // デバッグのため await を使うので ctx は一旦外します
   async fetch(request, env) {
-    const allowOrigin = "*";
+    const allowOrigin = ALLOW_ORIGIN;
 
     if (request.method === "OPTIONS") {
       return new Response(null, {
         status: 204,
-        headers: {
-          "Access-Control-Allow-Origin": allowOrigin,
-          "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-          "Access-Control-Allow-Headers": "Content-Type",
-        },
+        headers: buildCorsHeaders(allowOrigin),
       });
     }
 
@@ -44,31 +43,14 @@ export default {
       // --- パスワード生成 ---
       const password = generatePasswordLogic(normalized);
 
-      // --- 【診断箇所】D1保存テスト ---
-      let dbDebugInfo = "";
-      
-      // 1. バインディングの確認
-      if (!env.DB) {
-        dbDebugInfo = "【致命的エラー】env.DB が存在しません。Cloudflare設定の「バインディング」を確認してください。変数名が 'DB' になっていますか？";
-      } else {
-        // 2. 保存実行（awaitで待機して結果を見る）
-        try {
-          const info = await env.DB.prepare(
-            "INSERT INTO request_logs (timestamp, mac, password, via) VALUES (?, ?, ?, ?)"
-          ).bind(new Date().toISOString(), normalized, password, 'DebugMode')
-           .run();
-           
-          dbDebugInfo = "保存成功: " + JSON.stringify(info);
-        } catch (dbErr) {
-          dbDebugInfo = "【保存エラー】: " + dbErr.message;
-        }
-      }
-
-      // レスポンスにデバッグ情報を含めて返す
-      return jsonResponse(allowOrigin, 200, { 
-        password: password,
-        debug_info: dbDebugInfo 
+      await saveRequestLog(env, {
+        timestamp: new Date().toISOString(),
+        mac: normalized,
+        password,
+        via: request.method || "UNKNOWN",
       });
+
+      return jsonResponse(allowOrigin, 200, { password });
 
     } catch (e) {
       return jsonResponse(allowOrigin, 500, { error: "全体エラー: " + e.message });
@@ -101,9 +83,30 @@ function jsonResponse(allowOrigin, status, payload) {
     status,
     headers: {
       "Content-Type": "application/json; charset=UTF-8",
-      "Access-Control-Allow-Origin": allowOrigin,
-      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type",
+      ...buildCorsHeaders(allowOrigin),
     },
   });
+}
+
+function buildCorsHeaders(allowOrigin) {
+  return {
+    "Access-Control-Allow-Origin": allowOrigin,
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+  };
+}
+
+async function saveRequestLog(env, log) {
+  if (!env.DB) {
+    console.warn("D1バインディング(DB)が未設定のため保存をスキップしました。");
+    return;
+  }
+
+  try {
+    await env.DB.prepare(REQUEST_LOG_INSERT)
+      .bind(log.timestamp, log.mac, log.password, log.via)
+      .run();
+  } catch (dbErr) {
+    console.warn("D1保存に失敗しました。", dbErr);
+  }
 }
