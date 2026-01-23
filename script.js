@@ -13,7 +13,6 @@ document.addEventListener('DOMContentLoaded', () => {
         const normalized = normalizeMac(macRaw);
         const validationError = validateMac(normalized);
 
-        // 前回の表示をクリア
         errorEl.textContent = "";
         passwordEl.value = "";
 
@@ -24,8 +23,16 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         try {
-            const password = await fetchPassword(normalized);
-            passwordEl.value = password;
+            const result = await fetchPassword(normalized);
+
+            // パスワード表示
+            passwordEl.value = result.password;
+
+            // JST変換した日時（今後表示・ログ用途で使える）
+            if (result.timestamp) {
+                console.log("生成日時(JST):", formatUtcToJst(result.timestamp));
+            }
+
         } catch (err) {
             errorEl.textContent = err.message || "サーバー通信に失敗しました。";
             macInput.focus();
@@ -33,13 +40,12 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function fetchPassword(mac) {
-        // Workerへリクエスト送信
         const response = await fetch(AppConfig.API_ENDPOINT, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json"
             },
-            body: JSON.stringify({ mac: mac })
+            body: JSON.stringify({ mac })
         });
 
         if (!response.ok) {
@@ -52,7 +58,15 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!data.password) {
             throw new Error("パスワードが取得できませんでした。");
         }
-        return data.password;
+
+        return data;
+    }
+
+    // --- ここが追加された「王道」部分 ---
+    function formatUtcToJst(utcString) {
+        return new Date(utcString).toLocaleString("ja-JP", {
+            timeZone: "Asia/Tokyo"
+        });
     }
 
     function validateMac(normalized) {
