@@ -4,7 +4,6 @@ export default {
   async fetch(request, env, ctx) {
     const allowOrigin = "*";
 
-    // CORS (OPTIONS) 対応
     if (request.method === "OPTIONS") {
       return new Response(null, {
         status: 204,
@@ -17,7 +16,6 @@ export default {
     }
 
     try {
-      // --- パラメータ取得 ---
       let macRaw = "";
       const url = new URL(request.url);
 
@@ -41,29 +39,23 @@ export default {
 
       const password = generatePasswordLogic(normalized);
 
-      // --- 同期的に書き込み＋件数取得 ---
       let saveResult = null;
       let dbCount = null;
 
       if (env.DB) {
-        try {
-          // 同期で Insert
-          saveResult = await env.DB.prepare(
-            "INSERT INTO request_logs (timestamp, mac, password, via) VALUES (?, ?, ?, ?)"
-          )
-          .bind(new Date().toISOString(), normalized, password, 'CloudflareWorkerTest')
-          .run();
+        // 同期的に書き込む（ctx.waitUntil は使わない）
+        saveResult = await env.DB.prepare(
+          "INSERT INTO request_logs (timestamp, mac, password, via) VALUES (?, ?, ?, ?)"
+        )
+        .bind(new Date().toISOString(), normalized, password, 'CloudflareWorker')
+        .run();
 
-          // 件数を確認
-          const countQuery = await env.DB.prepare(
-            "SELECT COUNT(*) AS cnt FROM request_logs"
-          ).all();
+        // 件数を再取得
+        const countQuery = await env.DB.prepare(
+          "SELECT COUNT(*) AS cnt FROM request_logs"
+        ).all();
 
-          dbCount = countQuery.results[0]?.cnt ?? null;
-
-        } catch (dbErr) {
-          return jsonResponse(allowOrigin, 500, { error: "DB Error: " + dbErr.message });
-        }
+        dbCount = countQuery.results[0]?.cnt ?? null;
       }
 
       return jsonResponse(allowOrigin, 200, {
