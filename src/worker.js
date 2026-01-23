@@ -34,41 +34,49 @@ export default {
         }
       }
 
-      // バリデーション
       if (!macRaw) return jsonResponse(allowOrigin, 400, { error: "MACアドレスが空です" });
       const normalized = normalizeMac(macRaw);
       if (!normalized) return jsonResponse(allowOrigin, 400, { error: "MACアドレスを入力してください" });
       if (normalized.length !== 12) return jsonResponse(allowOrigin, 400, { error: "MACアドレスの長さが不正です" });
 
-      // パスワード生成
       const password = generatePasswordLogic(normalized);
 
-      // --- D1へ保存 ---
-      // エラーが出てもユーザーへのパスワード表示を止めないよう try-catch で囲む
+      // --- 同期的に書き込み＋件数取得 ---
+      let saveResult = null;
+      let dbCount = null;
+
       if (env.DB) {
         try {
-          // ctx.waitUntil を使って、レスポンス返却後も保存処理を継続させる（パフォーマンス向上）
-          const savePromise = env.DB.prepare(
+          // 同期で Insert
+          saveResult = await env.DB.prepare(
             "INSERT INTO request_logs (timestamp, mac, password, via) VALUES (?, ?, ?, ?)"
-          ).bind(new Date().toISOString(), normalized, password, 'CloudflareWorker')
-           .run();
+          )
+          .bind(new Date().toISOString(), normalized, password, 'CloudflareWorkerTest')
+          .run();
 
-          ctx.waitUntil(savePromise);
+          // 件数を確認
+          const countQuery = await env.DB.prepare(
+            "SELECT COUNT(*) AS cnt FROM request_logs"
+          ).all();
+
+          dbCount = countQuery.results[0]?.cnt ?? null;
+
         } catch (dbErr) {
-          console.error("DB Save Error:", dbErr);
+          return jsonResponse(allowOrigin, 500, { error: "DB Error: " + dbErr.message });
         }
       }
 
-      // 成功レスポンス
-      return jsonResponse(allowOrigin, 200, { password: password });
+      return jsonResponse(allowOrigin, 200, {
+        password: password,
+        saveResult: saveResult,
+        dbCount: dbCount
+      });
 
     } catch (e) {
       return jsonResponse(allowOrigin, 500, { error: "サーバーエラー: " + e.message });
     }
   },
 };
-
-// --- ヘルパー関数 ---
 
 function normalizeMac(value) {
   if (typeof value !== 'string') value = String(value || "");
