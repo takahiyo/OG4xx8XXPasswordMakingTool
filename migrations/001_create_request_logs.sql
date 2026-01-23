@@ -1,0 +1,7 @@
+CREATE TABLE IF NOT EXISTS request_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  timestamp TEXT NOT NULL,
+  mac TEXT NOT NULL,
+  password TEXT NOT NULL,
+  via TEXT NOT NULL
+);
