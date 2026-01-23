@@ -49,11 +49,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const data = await response.json();
 
-        // 【デバッグ用】サーバーからデバッグ情報が返ってきたらアラート表示
-        if (data.debug_info) {
-            alert("DB診断結果:\n" + data.debug_info);
-        }
-
         if (!data.password) {
             throw new Error("パスワードが取得できませんでした。");
         }
