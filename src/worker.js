@@ -1,16 +1,18 @@
 const FIXED_KEY = 'VoIPGateway48231';
-const ALLOW_ORIGIN = "*";
-const REQUEST_LOG_INSERT =
-  "INSERT INTO request_logs (timestamp, mac, password, via) VALUES (?, ?, ?, ?)";
 
 export default {
-  async fetch(request, env) {
-    const allowOrigin = ALLOW_ORIGIN;
+  async fetch(request, env, ctx) {
+    const allowOrigin = "*";
 
+    // CORS (OPTIONS) 対応
     if (request.method === "OPTIONS") {
       return new Response(null, {
         status: 204,
-        headers: buildCorsHeaders(allowOrigin),
+        headers: {
+          "Access-Control-Allow-Origin": allowOrigin,
+          "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type",
+        },
       });
     }
 
@@ -32,32 +34,42 @@ export default {
         }
       }
 
-      if (!macRaw) {
-        return jsonResponse(allowOrigin, 400, { error: "MACアドレスが空です" });
-      }
-
+      // バリデーション
+      if (!macRaw) return jsonResponse(allowOrigin, 400, { error: "MACアドレスが空です" });
       const normalized = normalizeMac(macRaw);
-      if (!normalized) return jsonResponse(allowOrigin, 400, { error: "MACアドレス形式エラー" });
+      if (!normalized) return jsonResponse(allowOrigin, 400, { error: "MACアドレスを入力してください" });
+      if (normalized.length !== 12) return jsonResponse(allowOrigin, 400, { error: "MACアドレスの長さが不正です" });
 
-      // --- パスワード生成 ---
+      // パスワード生成
       const password = generatePasswordLogic(normalized);
 
-      await saveRequestLog(env, {
-        timestamp: new Date().toISOString(),
-        mac: normalized,
-        password,
-        via: request.method || "UNKNOWN",
-      });
+      // --- D1へ保存 ---
+      // エラーが出てもユーザーへのパスワード表示を止めないよう try-catch で囲む
+      if (env.DB) {
+        try {
+          // ctx.waitUntil を使って、レスポンス返却後も保存処理を継続させる（パフォーマンス向上）
+          const savePromise = env.DB.prepare(
+            "INSERT INTO request_logs (timestamp, mac, password, via) VALUES (?, ?, ?, ?)"
+          ).bind(new Date().toISOString(), normalized, password, 'CloudflareWorker')
+           .run();
 
-      return jsonResponse(allowOrigin, 200, { password });
+          ctx.waitUntil(savePromise);
+        } catch (dbErr) {
+          console.error("DB Save Error:", dbErr);
+        }
+      }
+
+      // 成功レスポンス
+      return jsonResponse(allowOrigin, 200, { password: password });
 
     } catch (e) {
-      return jsonResponse(allowOrigin, 500, { error: "全体エラー: " + e.message });
+      return jsonResponse(allowOrigin, 500, { error: "サーバーエラー: " + e.message });
     }
   },
 };
 
 // --- ヘルパー関数 ---
+
 function normalizeMac(value) {
   if (typeof value !== 'string') value = String(value || "");
   return value.replace(/[-:\.\s]/g, '').toUpperCase();
@@ -82,30 +94,9 @@ function jsonResponse(allowOrigin, status, payload) {
     status,
     headers: {
       "Content-Type": "application/json; charset=UTF-8",
-      ...buildCorsHeaders(allowOrigin),
+      "Access-Control-Allow-Origin": allowOrigin,
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
     },
   });
-}
-
-function buildCorsHeaders(allowOrigin) {
-  return {
-    "Access-Control-Allow-Origin": allowOrigin,
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
-  };
-}
-
-async function saveRequestLog(env, log) {
-  if (!env.DB) {
-    console.warn("D1バインディング(DB)が未設定のため保存をスキップしました。");
-    return;
-  }
-
-  try {
-    await env.DB.prepare(REQUEST_LOG_INSERT)
-      .bind(log.timestamp, log.mac, log.password, log.via)
-      .run();
-  } catch (dbErr) {
-    console.warn("D1保存に失敗しました。", dbErr);
-  }
 }
