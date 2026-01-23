@@ -4,7 +4,6 @@ const REQUEST_LOG_INSERT =
   "INSERT INTO request_logs (timestamp, mac, password, via) VALUES (?, ?, ?, ?)";
 
 export default {
-  // デバッグのため await を使うので ctx は一旦外します
   async fetch(request, env) {
     const allowOrigin = ALLOW_ORIGIN;
 
