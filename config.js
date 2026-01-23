@@ -1,6 +1,5 @@
 const AppConfig = {
-    // ↓ "https://..." の部分を、先ほどコピーしたWorkerのURLに書き換えてください
-    API_ENDPOINT: "https://og4xx8xxpasswordmakingtool.taka-hiyo.workers.dev/",
+    API_ENDPOINT: "https://og4xx8xxpasswordmakingtool-dev.taka-hiyo.workers.dev/",
     UI: {
         MAX_WIDTH: "400px",
         COLORS: {
